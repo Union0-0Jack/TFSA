@@ -3,12 +3,18 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
+  addFundingFlow,
   addTransaction,
+  calculateFundingSummary,
   calculateYearSummary,
   createEmptyData,
+  deleteFundingFlow,
   deleteTransaction,
+  ensureDataShape,
   getOrCreateYear,
+  setFundingStartingBalance,
   setStartingContributionRoom,
+  updateFundingFlow,
   updateTransaction,
 } = require("../lib/tfsa");
 
@@ -108,4 +114,88 @@ test("edit and delete recompute correctly", () => {
   assert.equal(summary.contributions, 2500);
   assert.equal(summary.remainingRoom, 4500);
   assert.equal(summary.transactions.length, 1);
+});
+
+test("funding balance tracks initial balance, inflows, and outflows", () => {
+  const data = createEmptyData();
+  setFundingStartingBalance(data, 10000);
+  addFundingFlow(data, {
+    id: "a",
+    date: "2026-01-01",
+    type: "inflow",
+    amount: 2500,
+    note: "",
+  });
+  addFundingFlow(data, {
+    id: "b",
+    date: "2026-02-01",
+    type: "outflow",
+    amount: 1200,
+    note: "",
+  });
+
+  const summary = calculateFundingSummary(data.funding);
+  assert.equal(summary.inflows, 2500);
+  assert.equal(summary.outflows, 1200);
+  assert.equal(summary.currentBalance, 11300);
+});
+
+test("funding edit and delete recompute correctly", () => {
+  const data = createEmptyData();
+  setFundingStartingBalance(data, 5000);
+  addFundingFlow(data, {
+    id: "a",
+    date: "2026-01-01",
+    type: "inflow",
+    amount: 1000,
+    note: "",
+  });
+  addFundingFlow(data, {
+    id: "b",
+    date: "2026-01-02",
+    type: "outflow",
+    amount: 500,
+    note: "",
+  });
+
+  updateFundingFlow(data, "a", {
+    date: "2026-01-01",
+    type: "inflow",
+    amount: 1500,
+    note: "updated",
+  });
+  deleteFundingFlow(data, "b");
+
+  const summary = calculateFundingSummary(data.funding);
+  assert.equal(summary.currentBalance, 6500);
+  assert.equal(summary.flows.length, 1);
+});
+
+test("old data without funding is normalized", () => {
+  const data = ensureDataShape({ years: {} });
+  const summary = calculateFundingSummary(data.funding);
+
+  assert.equal(summary.startingBalance, 0);
+  assert.equal(summary.currentBalance, 0);
+  assert.equal(summary.flows.length, 0);
+});
+
+test("funding and yearly contribution data are independent", () => {
+  const data = createEmptyData();
+  setStartingContributionRoom(data, 2026, 7000);
+  setFundingStartingBalance(data, 10000);
+  addFundingFlow(data, {
+    id: "a",
+    date: "2026-01-01",
+    type: "outflow",
+    amount: 3000,
+    note: "invested",
+  });
+
+  const yearSummary = calculateYearSummary(getOrCreateYear(data, 2026));
+  const fundingSummary = calculateFundingSummary(data.funding);
+
+  assert.equal(yearSummary.remainingRoom, 7000);
+  assert.equal(yearSummary.contributions, 0);
+  assert.equal(fundingSummary.currentBalance, 7000);
 });

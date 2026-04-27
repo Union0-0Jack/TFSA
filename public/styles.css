@@ -119,6 +119,7 @@ h1 {
 }
 
 .year-panel,
+.info-panel,
 .card {
   background: var(--panel);
   border: 1px solid rgba(255, 255, 255, 0.7);
@@ -127,8 +128,13 @@ h1 {
   backdrop-filter: blur(12px);
 }
 
-.year-panel {
+.year-panel,
+.info-panel {
   padding: 20px;
+}
+
+.compact-copy {
+  margin-bottom: 0;
 }
 
 .year-controls {
@@ -141,6 +147,27 @@ h1 {
   margin: 0;
   font-size: 0.88rem;
   word-break: break-all;
+}
+
+.tab-bar {
+  display: inline-flex;
+  gap: 8px;
+  padding: 6px;
+  margin-bottom: 24px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.54);
+}
+
+.tab-button {
+  color: var(--text);
+  background: transparent;
+  border: 1px solid transparent;
+}
+
+.tab-button.active {
+  color: white;
+  background: linear-gradient(135deg, var(--accent), #155e75);
 }
 
 .layout {
@@ -277,6 +304,10 @@ h1 {
   font-weight: 700;
 }
 
+.history-item.outflow .history-amount {
+  color: var(--danger);
+}
+
 .history-actions {
   display: flex;
   gap: 8px;
@@ -316,13 +347,15 @@ h1 {
   }
 
   .card,
-  .year-panel {
+  .year-panel,
+  .info-panel {
     padding: 18px;
   }
 
   .year-controls,
   .inline-form,
   .form-actions,
+  .tab-bar,
   .history-item,
   .history-actions {
     flex-direction: column;

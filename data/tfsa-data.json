@@ -1,4 +1,8 @@
 {
+  "funding": {
+    "startingBalance": 6300,
+    "flows": []
+  },
   "years": {
     "2026": {
       "year": 2026,
@@ -6,7 +10,6 @@
       "transactions": [
         {
           "id": "73c78e20-a751-4702-9bdf-991c1e44a925",
-          "year": 2026,
           "date": "2026-04-24",
           "type": "contribution",
           "amount": 11000,

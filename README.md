@@ -7,20 +7,16 @@
 在 macOS 上可以直接双击：
 
 ```text
-start-tfsa.command
+TFSA.command
 ```
 
 它会自动：
 
 - 启动本地服务
 - 打开浏览器到 `http://localhost:3000`
-- 记录进程号到 `.tfsa-server.pid`
+- 保持一个终端窗口打开
 
-要停止服务，可双击：
-
-```text
-stop-tfsa.command
-```
+要关闭 TFSA，直接关闭这个终端窗口，或在窗口里按 `Ctrl+C`。服务会一起停止。
 
 服务日志在：
 

@@ -5,13 +5,18 @@ const http = require("node:http");
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
 const {
+  addFundingFlow,
   addTransaction,
+  calculateFundingSummary,
   calculateYearSummary,
   createEmptyData,
+  deleteFundingFlow,
   deleteTransaction,
   ensureDataShape,
   getOrCreateYear,
+  setFundingStartingBalance,
   setStartingContributionRoom,
+  updateFundingFlow,
   updateTransaction,
 } = require("./lib/tfsa");
 
@@ -121,11 +126,46 @@ function validateTransactionPayload(body) {
   };
 }
 
+function validateFundingFlowPayload(body) {
+  const amount = validateAmount(body.amount);
+  const type = body.type === "outflow" ? "outflow" : body.type === "inflow" ? "inflow" : null;
+  const date = typeof body.date === "string" ? body.date : "";
+  const note = typeof body.note === "string" ? body.note.trim() : "";
+
+  if (!date || Number.isNaN(Date.parse(date))) {
+    return { error: "日期无效。" };
+  }
+
+  if (!type) {
+    return { error: "资金类型无效。" };
+  }
+
+  if (amount === null || amount === 0) {
+    return { error: "金额必须大于 0。" };
+  }
+
+  return {
+    value: {
+      date,
+      type,
+      amount,
+      note,
+    },
+  };
+}
+
 function buildYearPayload(data, year) {
   const yearData = getOrCreateYear(data, year);
   return {
     yearData,
     summary: calculateYearSummary(yearData),
+  };
+}
+
+function buildFundingPayload(data) {
+  return {
+    funding: data.funding,
+    fundingSummary: calculateFundingSummary(data.funding),
   };
 }
 
@@ -166,6 +206,85 @@ async function handleApi(request, response, pathname) {
         .sort((left, right) => right - left),
       ...buildYearPayload(data, selectedYear),
     });
+    return;
+  }
+
+  if (pathname === "/api/funding" && request.method === "GET") {
+    const data = await readData();
+    sendJson(response, 200, buildFundingPayload(data));
+    return;
+  }
+
+  if (pathname === "/api/funding/balance" && request.method === "PUT") {
+    const body = await readRequestBody(request);
+    const amount = validateAmount(body.startingBalance);
+
+    if (amount === null) {
+      sendJson(response, 400, { error: "初始资金余额必须为 0 或正数。" });
+      return;
+    }
+
+    const data = await readData();
+    setFundingStartingBalance(data, amount);
+    await writeData(data);
+    sendJson(response, 200, buildFundingPayload(data));
+    return;
+  }
+
+  if (pathname === "/api/funding/flows" && request.method === "POST") {
+    const body = await readRequestBody(request);
+    const validation = validateFundingFlowPayload(body);
+
+    if (validation.error) {
+      sendJson(response, 400, { error: validation.error });
+      return;
+    }
+
+    const data = await readData();
+    addFundingFlow(data, {
+      id: randomUUID(),
+      ...validation.value,
+    });
+    await writeData(data);
+    sendJson(response, 201, buildFundingPayload(data));
+    return;
+  }
+
+  if (pathname.startsWith("/api/funding/flows/") && request.method === "PUT") {
+    const flowId = pathname.split("/").pop();
+    const body = await readRequestBody(request);
+    const validation = validateFundingFlowPayload(body);
+
+    if (validation.error) {
+      sendJson(response, 400, { error: validation.error });
+      return;
+    }
+
+    const data = await readData();
+    const updated = updateFundingFlow(data, flowId, validation.value);
+
+    if (!updated) {
+      sendJson(response, 404, { error: "找不到要更新的资金记录。" });
+      return;
+    }
+
+    await writeData(data);
+    sendJson(response, 200, buildFundingPayload(data));
+    return;
+  }
+
+  if (pathname.startsWith("/api/funding/flows/") && request.method === "DELETE") {
+    const flowId = pathname.split("/").pop();
+    const data = await readData();
+    const deleted = deleteFundingFlow(data, flowId);
+
+    if (!deleted) {
+      sendJson(response, 404, { error: "找不到要删除的资金记录。" });
+      return;
+    }
+
+    await writeData(data);
+    sendJson(response, 200, buildFundingPayload(data));
     return;
   }
 

@@ -8,27 +8,33 @@
   </head>
   <body>
     <div class="page-shell">
-      <header class="hero">
-        <div>
-          <p class="eyebrow">TFSA Contribution Tracker</p>
-          <h1>TFSA 存取记录</h1>
-          <p class="hero-copy">
-            记录每次存款与取款，按年度查看剩余额度，避免无意超额。
-          </p>
-        </div>
+      <nav class="tab-bar" aria-label="功能切换">
+        <button class="tab-button active" type="button" data-tab="tfsa">TFSA 额度</button>
+        <button class="tab-button" type="button" data-tab="funding">资金余额</button>
+      </nav>
 
-        <section class="year-panel">
-          <label for="year-select">查看年份</label>
-          <div class="year-controls">
-            <select id="year-select"></select>
-            <button id="add-year-button" type="button">新年份</button>
+      <section id="tfsa-panel" class="tab-panel">
+        <header class="hero">
+          <div>
+            <p class="eyebrow">TFSA Contribution Tracker</p>
+            <h1>TFSA 存取记录</h1>
+            <p class="hero-copy">
+              记录每次存款与取款，按年度查看剩余额度，避免无意超额。
+            </p>
           </div>
-          <p class="data-path" id="data-path"></p>
-        </section>
-      </header>
 
-      <main class="layout">
-        <section class="card summary-card">
+          <section class="year-panel">
+            <label for="year-select">查看年份</label>
+            <div class="year-controls">
+              <select id="year-select"></select>
+              <button id="add-year-button" type="button">新年份</button>
+            </div>
+            <p class="data-path" id="data-path"></p>
+          </section>
+        </header>
+
+        <main class="layout">
+          <section class="card summary-card">
           <div class="card-heading">
             <div>
               <p class="section-kicker">年度仪表盘</p>
@@ -57,9 +63,9 @@
           </form>
 
           <div class="summary-grid" id="summary-grid"></div>
-        </section>
+          </section>
 
-        <section class="card form-card">
+          <section class="card form-card">
           <div class="card-heading">
             <div>
               <p class="section-kicker">录入活动</p>
@@ -107,9 +113,9 @@
               </button>
             </div>
           </form>
-        </section>
+          </section>
 
-        <section class="card history-card">
+          <section class="card history-card">
           <div class="card-heading history-heading">
             <div>
               <p class="section-kicker">历史记录</p>
@@ -130,11 +136,153 @@
             当前年份还没有记录。
           </div>
           <div id="history-list" class="history-list"></div>
-        </section>
-      </main>
+          </section>
+        </main>
+      </section>
+
+      <section id="funding-panel" class="tab-panel" hidden>
+        <header class="hero funding-hero">
+          <div>
+            <p class="eyebrow">Funding Balance Tracker</p>
+            <h1>资金余额</h1>
+            <p class="hero-copy">
+              独立记录可投入资金的初始余额、流入、流出和当前剩余金额。
+            </p>
+          </div>
+
+          <section class="info-panel">
+            <p class="section-kicker">独立功能</p>
+            <p class="hero-copy compact-copy">
+              这里的数据不会改变 TFSA 年度额度，也不会跟随年份切换。
+            </p>
+          </section>
+        </header>
+
+        <main class="layout">
+          <section class="card summary-card">
+          <div class="card-heading">
+            <div>
+              <p class="section-kicker">资金仪表盘</p>
+              <h2>投入资金余额</h2>
+            </div>
+            <span class="status-pill" id="funding-status-pill">载入中</span>
+          </div>
+
+          <form id="funding-balance-form" class="room-form">
+            <label for="funding-starting-balance">初始资金余额</label>
+            <div class="inline-form">
+              <input
+                id="funding-starting-balance"
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder="例如 10000"
+                required
+              />
+              <button type="submit">保存余额</button>
+            </div>
+            <p class="field-help">
+              这里记录你开始使用本工具时，可用于投入的资金余额。
+            </p>
+          </form>
+
+          <div class="summary-grid" id="funding-summary-grid"></div>
+          </section>
+
+          <section class="card form-card">
+          <div class="card-heading">
+            <div>
+              <p class="section-kicker">录入资金</p>
+              <h2 id="funding-form-title">新增资金记录</h2>
+            </div>
+          </div>
+
+          <form id="funding-flow-form" class="transaction-form">
+            <input id="funding-editing-id" type="hidden" />
+
+            <label for="funding-flow-date">日期</label>
+            <input id="funding-flow-date" type="date" required />
+
+            <label for="funding-flow-type">类型</label>
+            <select id="funding-flow-type" required>
+              <option value="inflow">流入</option>
+              <option value="outflow">流出</option>
+            </select>
+
+            <label for="funding-flow-amount">金额</label>
+            <input
+              id="funding-flow-amount"
+              type="number"
+              min="0.01"
+              step="0.01"
+              placeholder="例如 2500"
+              required
+            />
+
+            <label for="funding-flow-note">备注</label>
+            <textarea
+              id="funding-flow-note"
+              rows="3"
+              placeholder="例如：工资转入 / 买入 TFSA"
+            ></textarea>
+
+            <div class="preview-panel" id="funding-preview-panel">
+              输入金额后，这里会显示录入后的资金余额预估。
+            </div>
+
+            <div class="form-actions">
+              <button type="submit" id="funding-submit-button">保存记录</button>
+              <button type="button" class="ghost-button" id="funding-cancel-edit-button" hidden>
+                取消编辑
+              </button>
+            </div>
+          </form>
+          </section>
+
+          <section class="card history-card">
+          <div class="card-heading history-heading">
+            <div>
+              <p class="section-kicker">资金历史</p>
+              <h2>流水</h2>
+            </div>
+
+            <label class="filter-control">
+              筛选
+              <select id="funding-type-filter">
+                <option value="all">全部</option>
+                <option value="inflow">仅流入</option>
+                <option value="outflow">仅流出</option>
+              </select>
+            </label>
+          </div>
+
+          <div id="funding-history-empty" class="history-empty">
+            还没有资金流入或流出记录。
+          </div>
+          <div id="funding-history-list" class="history-list"></div>
+          </section>
+        </main>
+      </section>
     </div>
 
     <template id="history-item-template">
+      <article class="history-item">
+        <div class="history-main">
+          <div class="history-meta">
+            <span class="history-type"></span>
+            <time class="history-date"></time>
+          </div>
+          <strong class="history-amount"></strong>
+          <p class="history-note"></p>
+        </div>
+        <div class="history-actions">
+          <button type="button" data-action="edit">编辑</button>
+          <button type="button" data-action="delete" class="ghost-button">删除</button>
+        </div>
+      </article>
+    </template>
+
+    <template id="funding-history-item-template">
       <article class="history-item">
         <div class="history-main">
           <div class="history-meta">

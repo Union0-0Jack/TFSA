@@ -1,9 +1,12 @@
 const state = {
+  activeTab: "tfsa",
   selectedYear: new Date().getFullYear(),
   availableYears: [],
   summary: null,
   yearData: null,
   filter: "all",
+  fundingSummary: null,
+  fundingFilter: "all",
 };
 
 const elements = {
@@ -11,6 +14,25 @@ const elements = {
   cancelEditButton: document.querySelector("#cancel-edit-button"),
   dataPath: document.querySelector("#data-path"),
   editingId: document.querySelector("#editing-id"),
+  fundingBalanceForm: document.querySelector("#funding-balance-form"),
+  fundingCancelEditButton: document.querySelector("#funding-cancel-edit-button"),
+  fundingEditingId: document.querySelector("#funding-editing-id"),
+  fundingFlowAmount: document.querySelector("#funding-flow-amount"),
+  fundingFlowDate: document.querySelector("#funding-flow-date"),
+  fundingFlowForm: document.querySelector("#funding-flow-form"),
+  fundingFlowNote: document.querySelector("#funding-flow-note"),
+  fundingFlowType: document.querySelector("#funding-flow-type"),
+  fundingFormTitle: document.querySelector("#funding-form-title"),
+  fundingHistoryEmpty: document.querySelector("#funding-history-empty"),
+  fundingHistoryItemTemplate: document.querySelector("#funding-history-item-template"),
+  fundingHistoryList: document.querySelector("#funding-history-list"),
+  fundingPanel: document.querySelector("#funding-panel"),
+  fundingPreviewPanel: document.querySelector("#funding-preview-panel"),
+  fundingStartingBalance: document.querySelector("#funding-starting-balance"),
+  fundingStatusPill: document.querySelector("#funding-status-pill"),
+  fundingSubmitButton: document.querySelector("#funding-submit-button"),
+  fundingSummaryGrid: document.querySelector("#funding-summary-grid"),
+  fundingTypeFilter: document.querySelector("#funding-type-filter"),
   formTitle: document.querySelector("#form-title"),
   historyEmpty: document.querySelector("#history-empty"),
   historyList: document.querySelector("#history-list"),
@@ -22,6 +44,8 @@ const elements = {
   submitButton: document.querySelector("#submit-button"),
   summaryGrid: document.querySelector("#summary-grid"),
   summaryTitle: document.querySelector("#summary-title"),
+  tabButtons: document.querySelectorAll(".tab-button"),
+  tfsaPanel: document.querySelector("#tfsa-panel"),
   transactionAmount: document.querySelector("#transaction-amount"),
   transactionDate: document.querySelector("#transaction-date"),
   transactionForm: document.querySelector("#transaction-form"),
@@ -150,6 +174,80 @@ function renderHistory(summary) {
   }
 }
 
+function switchTab(tab) {
+  state.activeTab = tab;
+  elements.tfsaPanel.hidden = tab !== "tfsa";
+  elements.fundingPanel.hidden = tab !== "funding";
+
+  for (const button of elements.tabButtons) {
+    const isActive = button.dataset.tab === tab;
+    button.classList.toggle("active", isActive);
+    button.setAttribute("aria-selected", String(isActive));
+  }
+}
+
+function updateFundingStatus(summary) {
+  elements.fundingStatusPill.className = "status-pill";
+  elements.fundingStatusPill.textContent = `当前余额 ${currency(summary.currentBalance)}`;
+
+  if (summary.currentBalance < 0) {
+    elements.fundingStatusPill.classList.add("danger");
+  }
+}
+
+function renderFundingSummary(summary) {
+  elements.fundingStartingBalance.value = summary.startingBalance || "";
+  updateFundingStatus(summary);
+
+  const stats = [
+    { label: "初始资金余额", value: currency(summary.startingBalance) },
+    { label: "累计流入", value: currency(summary.inflows) },
+    { label: "累计流出", value: currency(summary.outflows) },
+    { label: "当前资金余额", value: currency(summary.currentBalance) },
+  ];
+
+  elements.fundingSummaryGrid.innerHTML = "";
+  for (const stat of stats) {
+    const card = document.createElement("div");
+    card.className = "stat-card";
+    card.innerHTML = `<span>${stat.label}</span><strong>${stat.value}</strong>`;
+    elements.fundingSummaryGrid.append(card);
+  }
+}
+
+function renderFundingHistory(summary) {
+  const flows =
+    state.fundingFilter === "all"
+      ? summary.flows
+      : summary.flows.filter((flow) => flow.type === state.fundingFilter);
+
+  elements.fundingHistoryList.innerHTML = "";
+  elements.fundingHistoryEmpty.hidden = flows.length > 0;
+
+  for (const flow of flows) {
+    const fragment = elements.fundingHistoryItemTemplate.content.cloneNode(true);
+    const item = fragment.querySelector(".history-item");
+    const type = flow.type === "inflow" ? "流入" : "流出";
+    const signedAmount = `${flow.type === "inflow" ? "+" : "-"}${currency(flow.amount)}`;
+
+    fragment.querySelector(".history-type").textContent = type;
+    fragment.querySelector(".history-date").textContent = formatDate(flow.date);
+    fragment.querySelector(".history-amount").textContent = signedAmount;
+    fragment.querySelector(".history-note").textContent = flow.note || "无备注";
+
+    item.dataset.id = flow.id;
+    item.classList.toggle("outflow", flow.type === "outflow");
+    item.querySelector('[data-action="edit"]').addEventListener("click", () => {
+      startFundingEdit(flow);
+    });
+    item.querySelector('[data-action="delete"]').addEventListener("click", () => {
+      deleteFundingFlow(flow.id);
+    });
+
+    elements.fundingHistoryList.append(fragment);
+  }
+}
+
 function refreshPreview() {
   const amount = Number(elements.transactionAmount.value);
   const type = elements.transactionType.value;
@@ -193,6 +291,36 @@ function refreshPreview() {
   elements.previewPanel.textContent = `录入后预计剩余额度 ${currency(remainingRoom)}。`;
 }
 
+function refreshFundingPreview() {
+  const amount = Number(elements.fundingFlowAmount.value);
+  const type = elements.fundingFlowType.value;
+  const summary = state.fundingSummary;
+
+  elements.fundingPreviewPanel.className = "preview-panel";
+
+  if (!summary || !Number.isFinite(amount) || amount <= 0) {
+    elements.fundingPreviewPanel.textContent = "输入金额后，这里会显示录入后的资金余额预估。";
+    return;
+  }
+
+  const current = getEditingFundingFlow();
+  const simulatedInflows =
+    summary.inflows -
+    (current?.type === "inflow" ? current.amount : 0) +
+    (type === "inflow" ? amount : 0);
+  const simulatedOutflows =
+    summary.outflows -
+    (current?.type === "outflow" ? current.amount : 0) +
+    (type === "outflow" ? amount : 0);
+  const currentBalance = summary.startingBalance + simulatedInflows - simulatedOutflows;
+
+  elements.fundingPreviewPanel.textContent = `保存后预计资金余额 ${currency(currentBalance)}。`;
+
+  if (currentBalance < 0) {
+    elements.fundingPreviewPanel.classList.add("danger");
+  }
+}
+
 function getEditingTransaction() {
   if (!elements.editingId.value || !state.summary) {
     return null;
@@ -200,6 +328,16 @@ function getEditingTransaction() {
 
   return state.summary.transactions.find(
     (transaction) => transaction.id === elements.editingId.value
+  );
+}
+
+function getEditingFundingFlow() {
+  if (!elements.fundingEditingId.value || !state.fundingSummary) {
+    return null;
+  }
+
+  return state.fundingSummary.flows.find(
+    (flow) => flow.id === elements.fundingEditingId.value
   );
 }
 
@@ -211,6 +349,16 @@ function resetForm() {
   elements.cancelEditButton.hidden = true;
   elements.transactionDate.value = new Date().toISOString().slice(0, 10);
   refreshPreview();
+}
+
+function resetFundingForm() {
+  elements.fundingFlowForm.reset();
+  elements.fundingEditingId.value = "";
+  elements.fundingFormTitle.textContent = "新增资金记录";
+  elements.fundingSubmitButton.textContent = "保存记录";
+  elements.fundingCancelEditButton.hidden = true;
+  elements.fundingFlowDate.value = new Date().toISOString().slice(0, 10);
+  refreshFundingPreview();
 }
 
 function startEdit(transaction) {
@@ -226,6 +374,20 @@ function startEdit(transaction) {
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
+function startFundingEdit(flow) {
+  elements.fundingEditingId.value = flow.id;
+  elements.fundingFormTitle.textContent = "编辑资金记录";
+  elements.fundingSubmitButton.textContent = "保存修改";
+  elements.fundingCancelEditButton.hidden = false;
+  elements.fundingFlowDate.value = flow.date;
+  elements.fundingFlowType.value = flow.type;
+  elements.fundingFlowAmount.value = flow.amount;
+  elements.fundingFlowNote.value = flow.note;
+  refreshFundingPreview();
+  switchTab("funding");
+  elements.fundingFlowForm.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
 async function loadYear(year = state.selectedYear) {
   const payload = await request(`/api/data?year=${year}`);
   state.selectedYear = payload.selectedYear;
@@ -238,6 +400,15 @@ async function loadYear(year = state.selectedYear) {
   renderHistory(payload.summary);
   elements.dataPath.textContent = `数据文件：${payload.dataFile}`;
   refreshPreview();
+}
+
+async function loadFunding() {
+  const payload = await request("/api/funding");
+  state.fundingSummary = payload.fundingSummary;
+
+  renderFundingSummary(payload.fundingSummary);
+  renderFundingHistory(payload.fundingSummary);
+  refreshFundingPreview();
 }
 
 async function saveRoom(event) {
@@ -296,6 +467,58 @@ async function submitTransaction(event) {
   resetForm();
 }
 
+async function saveFundingBalance(event) {
+  event.preventDefault();
+  const amount = Number(elements.fundingStartingBalance.value);
+
+  if (!Number.isFinite(amount) || amount < 0) {
+    window.alert("请输入 0 或正数的初始资金余额。");
+    return;
+  }
+
+  const payload = await request("/api/funding/balance", {
+    method: "PUT",
+    body: JSON.stringify({
+      startingBalance: amount,
+    }),
+  });
+
+  state.fundingSummary = payload.fundingSummary;
+  renderFundingSummary(payload.fundingSummary);
+  renderFundingHistory(payload.fundingSummary);
+  refreshFundingPreview();
+}
+
+async function submitFundingFlow(event) {
+  event.preventDefault();
+
+  const body = {
+    date: elements.fundingFlowDate.value,
+    type: elements.fundingFlowType.value,
+    amount: Number(elements.fundingFlowAmount.value),
+    note: elements.fundingFlowNote.value.trim(),
+  };
+
+  if (!body.date || !Number.isFinite(body.amount) || body.amount <= 0) {
+    window.alert("请填写有效的日期和金额。");
+    return;
+  }
+
+  const flowId = elements.fundingEditingId.value;
+  const endpoint = flowId ? `/api/funding/flows/${flowId}` : "/api/funding/flows";
+  const method = flowId ? "PUT" : "POST";
+
+  const payload = await request(endpoint, {
+    method,
+    body: JSON.stringify(body),
+  });
+
+  state.fundingSummary = payload.fundingSummary;
+  renderFundingSummary(payload.fundingSummary);
+  renderFundingHistory(payload.fundingSummary);
+  resetFundingForm();
+}
+
 async function deleteTransaction(transactionId) {
   const confirmed = window.confirm("确定删除这条记录吗？");
   if (!confirmed) {
@@ -311,6 +534,22 @@ async function deleteTransaction(transactionId) {
   renderSummary(payload.summary);
   renderHistory(payload.summary);
   resetForm();
+}
+
+async function deleteFundingFlow(flowId) {
+  const confirmed = window.confirm("确定删除这条资金记录吗？");
+  if (!confirmed) {
+    return;
+  }
+
+  const payload = await request(`/api/funding/flows/${flowId}`, {
+    method: "DELETE",
+  });
+
+  state.fundingSummary = payload.fundingSummary;
+  renderFundingSummary(payload.fundingSummary);
+  renderFundingHistory(payload.fundingSummary);
+  resetFundingForm();
 }
 
 function addYear() {
@@ -339,10 +578,21 @@ elements.yearSelect.addEventListener("change", (event) => {
   resetForm();
   loadYear(state.selectedYear).catch(showError);
 });
+for (const button of elements.tabButtons) {
+  button.addEventListener("click", () => {
+    switchTab(button.dataset.tab);
+  });
+}
 elements.typeFilter.addEventListener("change", (event) => {
   state.filter = event.target.value;
   if (state.summary) {
     renderHistory(state.summary);
+  }
+});
+elements.fundingTypeFilter.addEventListener("change", (event) => {
+  state.fundingFilter = event.target.value;
+  if (state.fundingSummary) {
+    renderFundingHistory(state.fundingSummary);
   }
 });
 elements.roomForm.addEventListener("submit", (event) => {
@@ -351,10 +601,22 @@ elements.roomForm.addEventListener("submit", (event) => {
 elements.transactionForm.addEventListener("submit", (event) => {
   submitTransaction(event).catch(showError);
 });
+elements.fundingBalanceForm.addEventListener("submit", (event) => {
+  saveFundingBalance(event).catch(showError);
+});
+elements.fundingFlowForm.addEventListener("submit", (event) => {
+  submitFundingFlow(event).catch(showError);
+});
 elements.transactionAmount.addEventListener("input", refreshPreview);
 elements.transactionType.addEventListener("change", refreshPreview);
+elements.fundingFlowAmount.addEventListener("input", refreshFundingPreview);
+elements.fundingFlowType.addEventListener("change", refreshFundingPreview);
 elements.cancelEditButton.addEventListener("click", resetForm);
+elements.fundingCancelEditButton.addEventListener("click", resetFundingForm);
 elements.addYearButton.addEventListener("click", addYear);
 
 resetForm();
+resetFundingForm();
+switchTab("tfsa");
 loadYear().catch(showError);
+loadFunding().catch(showError);
