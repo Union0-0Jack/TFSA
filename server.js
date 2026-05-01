@@ -8,12 +8,15 @@ const {
   addFundingFlow,
   addTransaction,
   calculateFundingSummary,
+  calculateTradeCashAmount,
   calculateYearSummary,
   createEmptyData,
   deleteFundingFlow,
   deleteTransaction,
   ensureDataShape,
   getOrCreateYear,
+  isTradeFlow,
+  sameInstrument,
   setFundingStartingBalance,
   setStartingContributionRoom,
   updateFundingFlow,
@@ -92,6 +95,14 @@ function validateAmount(value) {
   return Number(amount.toFixed(2));
 }
 
+function validatePositiveNumber(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) {
+    return null;
+  }
+  return number;
+}
+
 function validateTransactionPayload(body) {
   const year = validateYear(body.year);
   const amount = validateAmount(body.amount);
@@ -126,7 +137,22 @@ function validateTransactionPayload(body) {
   };
 }
 
-function validateFundingFlowPayload(body) {
+function getMatchedQuantity(flows, buy, ignoredFlowId = "") {
+  return flows.reduce((total, flow) => {
+    if (
+      flow.id !== ignoredFlowId &&
+      isTradeFlow(flow) &&
+      flow.side === "sell" &&
+      flow.matchedTradeId === buy.id &&
+      sameInstrument(buy, flow)
+    ) {
+      return total + flow.quantity;
+    }
+    return total;
+  }, 0);
+}
+
+function validateLegacyFundingFlowPayload(body) {
   const amount = validateAmount(body.amount);
   const type = body.type === "outflow" ? "outflow" : body.type === "inflow" ? "inflow" : null;
   const date = typeof body.date === "string" ? body.date : "";
@@ -152,6 +178,136 @@ function validateFundingFlowPayload(body) {
       note,
     },
   };
+}
+
+function validateFundingFlowPayload(body, data, currentFlowId = "") {
+  if (body.assetType !== "stock" && body.assetType !== "option") {
+    return validateLegacyFundingFlowPayload(body);
+  }
+
+  const date = typeof body.date === "string" ? body.date : "";
+  const assetType = body.assetType;
+  const side = body.side === "sell" ? "sell" : body.side === "buy" ? "buy" : null;
+  const ticker = typeof body.ticker === "string" ? body.ticker.trim().toUpperCase() : "";
+  const quantity = validatePositiveNumber(body.quantity);
+  const price = validatePositiveNumber(body.price);
+  const fee = validateAmount(body.fee || 0);
+  const note = typeof body.note === "string" ? body.note.trim() : "";
+  const value = {
+    date,
+    assetType,
+    side,
+    ticker,
+    quantity,
+    price,
+    fee,
+    note,
+    matchedTradeId: typeof body.matchedTradeId === "string" ? body.matchedTradeId : "",
+  };
+
+  if (!date || Number.isNaN(Date.parse(date))) {
+    return { error: "日期无效。" };
+  }
+
+  if (!side) {
+    return { error: "买卖方向无效。" };
+  }
+
+  if (!ticker) {
+    return { error: "Ticker 必填。" };
+  }
+
+  if (quantity === null) {
+    return { error: assetType === "option" ? "期权份数必须大于 0。" : "股票股数必须大于 0。" };
+  }
+
+  if (price === null) {
+    return { error: "成交价必须大于 0。" };
+  }
+
+  if (fee === null) {
+    return { error: "手续费必须为 0 或正数。" };
+  }
+
+  if (assetType === "option") {
+    value.expiryDate = typeof body.expiryDate === "string" ? body.expiryDate : "";
+    value.optionType = body.optionType === "put" ? "put" : body.optionType === "call" ? "call" : null;
+    value.strike = validatePositiveNumber(body.strike);
+
+    if (!value.expiryDate || Number.isNaN(Date.parse(value.expiryDate))) {
+      return { error: "期权到期日无效。" };
+    }
+
+    if (!value.optionType) {
+      return { error: "期权类型无效。" };
+    }
+
+    if (value.strike === null) {
+      return { error: "行权价必须大于 0。" };
+    }
+  }
+
+  value.cashAmount = calculateTradeCashAmount(value);
+  value.type = side === "buy" ? "outflow" : "inflow";
+  value.amount = value.cashAmount;
+
+  if (value.amount <= 0) {
+    return { error: "扣除手续费后的现金金额必须大于 0。" };
+  }
+
+  const flows = data.funding.flows;
+
+  if (side === "sell" && value.matchedTradeId) {
+    const buy = flows.find((flow) => flow.id === value.matchedTradeId);
+    if (!buy || !isTradeFlow(buy) || buy.side !== "buy") {
+      return { error: "找不到可匹配的买入记录。" };
+    }
+
+    if (!sameInstrument(buy, value)) {
+      return { error: "卖出交易必须匹配同一标的的买入记录。" };
+    }
+
+    const openQuantity = buy.quantity - getMatchedQuantity(flows, buy, currentFlowId);
+    if (value.quantity > openQuantity + 0.000001) {
+      return { error: `卖出数量超过可匹配数量，当前最多可卖 ${openQuantity}。` };
+    }
+  }
+
+  if (side === "buy" && currentFlowId) {
+    const matchedSells = flows.filter(
+      (flow) => flow.id !== currentFlowId && isTradeFlow(flow) && flow.matchedTradeId === currentFlowId
+    );
+    const mismatchedSell = matchedSells.find((flow) => !sameInstrument(value, flow));
+
+    if (mismatchedSell) {
+      return { error: "这笔买入已被卖出记录匹配，不能改成不同标的。" };
+    }
+
+    const matchedQuantity = matchedSells.reduce((total, flow) => total + flow.quantity, 0);
+    if (value.quantity < matchedQuantity - 0.000001) {
+      return { error: `这笔买入已匹配 ${matchedQuantity}，数量不能小于已匹配数量。` };
+    }
+  }
+
+  return { value };
+}
+
+function canDeleteFundingFlow(data, flowId) {
+  const flow = data.funding.flows.find((candidate) => candidate.id === flowId);
+
+  if (!flow || !isTradeFlow(flow) || flow.side !== "buy") {
+    return { ok: true };
+  }
+
+  const hasMatchedSell = data.funding.flows.some(
+    (candidate) => isTradeFlow(candidate) && candidate.side === "sell" && candidate.matchedTradeId === flowId
+  );
+
+  if (hasMatchedSell) {
+    return { ok: false, error: "这笔买入已有匹配卖出记录，请先删除或改掉卖出记录。" };
+  }
+
+  return { ok: true };
 }
 
 function buildYearPayload(data, year) {
@@ -233,14 +389,14 @@ async function handleApi(request, response, pathname) {
 
   if (pathname === "/api/funding/flows" && request.method === "POST") {
     const body = await readRequestBody(request);
-    const validation = validateFundingFlowPayload(body);
+    const data = await readData();
+    const validation = validateFundingFlowPayload(body, data);
 
     if (validation.error) {
       sendJson(response, 400, { error: validation.error });
       return;
     }
 
-    const data = await readData();
     addFundingFlow(data, {
       id: randomUUID(),
       ...validation.value,
@@ -253,14 +409,14 @@ async function handleApi(request, response, pathname) {
   if (pathname.startsWith("/api/funding/flows/") && request.method === "PUT") {
     const flowId = pathname.split("/").pop();
     const body = await readRequestBody(request);
-    const validation = validateFundingFlowPayload(body);
+    const data = await readData();
+    const validation = validateFundingFlowPayload(body, data, flowId);
 
     if (validation.error) {
       sendJson(response, 400, { error: validation.error });
       return;
     }
 
-    const data = await readData();
     const updated = updateFundingFlow(data, flowId, validation.value);
 
     if (!updated) {
@@ -276,6 +432,13 @@ async function handleApi(request, response, pathname) {
   if (pathname.startsWith("/api/funding/flows/") && request.method === "DELETE") {
     const flowId = pathname.split("/").pop();
     const data = await readData();
+    const deletionValidation = canDeleteFundingFlow(data, flowId);
+
+    if (!deletionValidation.ok) {
+      sendJson(response, 400, { error: deletionValidation.error });
+      return;
+    }
+
     const deleted = deleteFundingFlow(data, flowId);
 
     if (!deleted) {

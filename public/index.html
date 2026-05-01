@@ -192,8 +192,8 @@
           <section class="card form-card">
           <div class="card-heading">
             <div>
-              <p class="section-kicker">录入资金</p>
-              <h2 id="funding-form-title">新增资金记录</h2>
+              <p class="section-kicker">录入交易</p>
+              <h2 id="funding-form-title">新增证券交易</h2>
             </div>
           </div>
 
@@ -203,27 +203,81 @@
             <label for="funding-flow-date">日期</label>
             <input id="funding-flow-date" type="date" required />
 
-            <label for="funding-flow-type">类型</label>
-            <select id="funding-flow-type" required>
-              <option value="inflow">流入</option>
-              <option value="outflow">流出</option>
+            <label for="funding-asset-type">标的类型</label>
+            <select id="funding-asset-type" required>
+              <option value="stock">股票</option>
+              <option value="option">期权</option>
             </select>
 
-            <label for="funding-flow-amount">金额</label>
+            <label for="funding-side">买卖方向</label>
+            <select id="funding-side" required>
+              <option value="buy">买入</option>
+              <option value="sell">卖出</option>
+            </select>
+
+            <label for="funding-ticker">Ticker</label>
+            <input id="funding-ticker" type="text" placeholder="例如 QCOM" required />
+
+            <div class="option-fields" id="funding-option-fields" hidden>
+              <label for="funding-expiry-date">到期日</label>
+              <input id="funding-expiry-date" type="date" />
+
+              <label for="funding-option-type">期权类型</label>
+              <select id="funding-option-type">
+                <option value="call">Call</option>
+                <option value="put">Put</option>
+              </select>
+
+              <label for="funding-strike">行权价</label>
+              <input
+                id="funding-strike"
+                type="number"
+                min="0.01"
+                step="0.01"
+                placeholder="例如 300"
+              />
+            </div>
+
+            <label for="funding-quantity" id="funding-quantity-label">股数</label>
             <input
-              id="funding-flow-amount"
+              id="funding-quantity"
               type="number"
-              min="0.01"
-              step="0.01"
-              placeholder="例如 2500"
+              min="0.000001"
+              step="0.000001"
+              placeholder="例如 100"
               required
             />
+
+            <label for="funding-price">成交价</label>
+            <input
+              id="funding-price"
+              type="number"
+              min="0.0001"
+              step="0.0001"
+              placeholder="例如 12.35"
+              required
+            />
+
+            <label for="funding-fee">手续费</label>
+            <input
+              id="funding-fee"
+              type="number"
+              min="0"
+              step="0.01"
+              placeholder="例如 1.25"
+            />
+
+            <div class="match-fields" id="funding-match-fields" hidden>
+              <label for="funding-match-trade">匹配买入记录</label>
+              <select id="funding-match-trade"></select>
+              <p class="field-help" id="funding-match-help">选择卖出标的后，这里会显示可匹配买入。</p>
+            </div>
 
             <label for="funding-flow-note">备注</label>
             <textarea
               id="funding-flow-note"
               rows="3"
-              placeholder="例如：工资转入 / 买入 TFSA"
+              placeholder="例如：分批止盈 / 扣除佣金后"
             ></textarea>
 
             <div class="preview-panel" id="funding-preview-panel">
@@ -291,6 +345,7 @@
           </div>
           <strong class="history-amount"></strong>
           <p class="history-note"></p>
+          <p class="history-detail"></p>
         </div>
         <div class="history-actions">
           <button type="button" data-action="edit">编辑</button>
