@@ -4,6 +4,7 @@
   "private": true,
   "description": "Local TFSA contribution tracker",
   "scripts": {
+    "build:pages": "node scripts/build-pages.js",
     "start": "node server.js",
     "test": "node --test"
   }
