@@ -17,13 +17,6 @@
         "note": "AMKR 260515 100Call 1张"
       },
       {
-        "id": "3cd9231a-a588-40a1-bf14-de91de09e392",
-        "date": "2026-04-28",
-        "type": "outflow",
-        "amount": 113,
-        "note": "CRML 260821 40Call 3份"
-      },
-      {
         "id": "2ab02712-35dc-4ed3-a8c3-a9d1758f3672",
         "date": "2026-04-29",
         "type": "outflow",
@@ -72,6 +65,72 @@
         "cashAmount": 212,
         "type": "outflow",
         "amount": 212
+      },
+      {
+        "id": "629c112d-edc2-4861-984f-ddfb22375e97",
+        "date": "2026-05-06",
+        "assetType": "stock",
+        "side": "buy",
+        "ticker": "NETG",
+        "quantity": 50,
+        "price": 16.22,
+        "fee": 0.3,
+        "note": "",
+        "matchedTradeId": "",
+        "cashAmount": 811.3,
+        "type": "outflow",
+        "amount": 811.3
+      },
+      {
+        "id": "2de9acc1-850d-496c-885b-c517b8149b4a",
+        "date": "2026-05-07",
+        "assetType": "stock",
+        "side": "buy",
+        "ticker": "NETG",
+        "quantity": 50,
+        "price": 17.16,
+        "fee": 0.3,
+        "note": "",
+        "matchedTradeId": "",
+        "cashAmount": 858.3,
+        "type": "outflow",
+        "amount": 858.3
+      },
+      {
+        "id": "f788cdad-883d-44c8-81c4-cfb900b8de44",
+        "date": "2026-05-08",
+        "assetType": "option",
+        "side": "buy",
+        "ticker": "RDW",
+        "quantity": 5,
+        "price": 1,
+        "fee": 3.49,
+        "note": "",
+        "matchedTradeId": "",
+        "expiryDate": "2026-06-18",
+        "optionType": "call",
+        "strike": 12,
+        "cashAmount": 503.49,
+        "type": "outflow",
+        "amount": 503.49
+      },
+      {
+        "id": "f2c8edf0-9562-4aef-bbea-eec47eb0f989",
+        "date": "2026-05-08",
+        "assetType": "option",
+        "side": "buy",
+        "ticker": "TSLL",
+        "quantity": 1,
+        "price": 2.81,
+        "fee": 1.05,
+        "note": "",
+        "matchedTradeId": "",
+        "expiryDate": "2026-09-18",
+        "optionType": "call",
+        "strike": 17,
+        "cashAmount": 282.05,
+        "type": "outflow",
+        "amount": 282.05
       }
     ]
   },
