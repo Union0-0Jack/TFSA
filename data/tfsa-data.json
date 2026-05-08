@@ -131,6 +131,21 @@
         "cashAmount": 282.05,
         "type": "outflow",
         "amount": 282.05
+      },
+      {
+        "id": "7eaf7428-436b-423d-939f-f6290539b2b1",
+        "date": "2026-05-08",
+        "assetType": "stock",
+        "side": "buy",
+        "ticker": "测试500元",
+        "quantity": 2,
+        "price": 100,
+        "fee": 1,
+        "note": "",
+        "matchedTradeId": "",
+        "cashAmount": 201,
+        "type": "outflow",
+        "amount": 201
       }
     ]
   },
