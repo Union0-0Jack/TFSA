@@ -3,13 +3,6 @@
     "startingBalance": 6300,
     "flows": [
       {
-        "id": "6c15060a-e6cd-46cd-b6b9-6a1e27108622",
-        "date": "2026-04-27",
-        "type": "outflow",
-        "amount": 890,
-        "note": "DXYZ买入30shares"
-      },
-      {
         "id": "ebec0b2c-9968-4628-8959-79f858b693d6",
         "date": "2026-04-27",
         "type": "outflow",
@@ -131,6 +124,72 @@
         "cashAmount": 282.05,
         "type": "outflow",
         "amount": 282.05
+      },
+      {
+        "id": "7dd3dfcd-2ebb-41ae-b9d4-4af71ed48dff",
+        "date": "2026-05-11",
+        "assetType": "option",
+        "side": "sell",
+        "ticker": "RDW",
+        "quantity": 5,
+        "price": 2.25,
+        "fee": 3.53,
+        "note": "",
+        "matchedTradeId": "f788cdad-883d-44c8-81c4-cfb900b8de44",
+        "expiryDate": "2026-06-18",
+        "optionType": "call",
+        "strike": 12,
+        "cashAmount": 1121.47,
+        "type": "inflow",
+        "amount": 1121.47
+      },
+      {
+        "id": "b1484f91-727f-4d38-b0fe-9a4d7b380e06",
+        "date": "2026-05-11",
+        "assetType": "option",
+        "side": "buy",
+        "ticker": "PLUG",
+        "quantity": 2,
+        "price": 0.21,
+        "fee": 2.38,
+        "note": "",
+        "matchedTradeId": "",
+        "expiryDate": "2026-06-18",
+        "optionType": "call",
+        "strike": 5,
+        "cashAmount": 44.38,
+        "type": "outflow",
+        "amount": 44.38
+      },
+      {
+        "id": "f5896bfb-e421-4af3-a128-e1828822f805",
+        "date": "2026-04-27",
+        "assetType": "stock",
+        "side": "buy",
+        "ticker": "DXYZ",
+        "quantity": 30,
+        "price": 29.67,
+        "fee": 0,
+        "note": "",
+        "matchedTradeId": "",
+        "cashAmount": 890.1,
+        "type": "outflow",
+        "amount": 890.1
+      },
+      {
+        "id": "67af6f60-696f-48e9-b39b-b437914b4f52",
+        "date": "2026-05-11",
+        "assetType": "stock",
+        "side": "sell",
+        "ticker": "DXYZ",
+        "quantity": 30,
+        "price": 68.8,
+        "fee": 0.37,
+        "note": "",
+        "matchedTradeId": "f5896bfb-e421-4af3-a128-e1828822f805",
+        "cashAmount": 2063.63,
+        "type": "inflow",
+        "amount": 2063.63
       }
     ]
   },
