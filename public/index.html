@@ -210,6 +210,18 @@
               <option value="option">期权</option>
             </select>
 
+            <label for="funding-match-enabled">是否匹配交易</label>
+            <select id="funding-match-enabled">
+              <option value="no">不匹配</option>
+              <option value="yes">匹配买入记录</option>
+            </select>
+
+            <div class="match-fields" id="funding-match-fields" hidden>
+              <label for="funding-match-trade">匹配买入记录</label>
+              <select id="funding-match-trade"></select>
+              <p class="field-help" id="funding-match-help">选择买入记录后会自动填入标的信息，仍可手动修改。</p>
+            </div>
+
             <label for="funding-side">买卖方向</label>
             <select id="funding-side" required>
               <option value="buy">买入</option>
@@ -267,12 +279,6 @@
               step="0.01"
               placeholder="例如 1.25"
             />
-
-            <div class="match-fields" id="funding-match-fields" hidden>
-              <label for="funding-match-trade">匹配买入记录</label>
-              <select id="funding-match-trade"></select>
-              <p class="field-help" id="funding-match-help">选择卖出标的后，这里会显示可匹配买入。</p>
-            </div>
 
             <label for="funding-flow-note">备注</label>
             <textarea

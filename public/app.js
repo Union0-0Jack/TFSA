@@ -30,6 +30,7 @@ const elements = {
   fundingHistoryEmpty: document.querySelector("#funding-history-empty"),
   fundingHistoryItemTemplate: document.querySelector("#funding-history-item-template"),
   fundingHistoryList: document.querySelector("#funding-history-list"),
+  fundingMatchEnabled: document.querySelector("#funding-match-enabled"),
   fundingMatchFields: document.querySelector("#funding-match-fields"),
   fundingMatchHelp: document.querySelector("#funding-match-help"),
   fundingMatchTrade: document.querySelector("#funding-match-trade"),
@@ -562,15 +563,19 @@ function getCandidateMatches() {
     return [];
   }
 
-  const draft = getDraftTrade();
-  if (draft.side !== "sell" || !draft.ticker) {
+  const assetType = elements.fundingAssetType.value;
+  if (elements.fundingSide.value !== "sell" || elements.fundingMatchEnabled.value !== "yes") {
     return [];
   }
 
   const current = getEditingFundingFlow();
   return state.fundingSummary.flows
     .filter((flow) => {
-      if (!isTradeFlow(flow) || flow.side !== "buy" || !sameInstrument(flow, draft)) {
+      if (!isTradeFlow(flow) || flow.side !== "buy" || flow.assetType !== assetType) {
+        return false;
+      }
+
+      if (flow.id === current?.id) {
         return false;
       }
 
@@ -587,6 +592,20 @@ function getSelectedMatch() {
   }
 
   return state.fundingSummary.flows.find((flow) => flow.id === elements.fundingMatchTrade.value) || null;
+}
+
+function applySelectedMatchToForm() {
+  const match = getSelectedMatch();
+  if (!match) {
+    return;
+  }
+
+  elements.fundingAssetType.value = match.assetType;
+  elements.fundingTicker.value = match.ticker;
+  elements.fundingExpiryDate.value = match.expiryDate || "";
+  elements.fundingOptionType.value = match.optionType || "call";
+  elements.fundingStrike.value = match.strike || "";
+  updateFundingFormVisibility();
 }
 
 function updateFundingMatchOptions() {
@@ -620,25 +639,28 @@ function updateFundingMatchOptions() {
   if (selected) {
     const editingQuantity =
       current?.side === "sell" && current.matchedTradeId === selected.id ? current.quantity : 0;
-    elements.fundingMatchHelp.textContent = `可匹配数量 ${formatNumber(selected.openQuantity + editingQuantity)}，买入总成本 ${currency(selected.cashAmount)}。`;
+    elements.fundingMatchHelp.textContent = `已填入 ${getInstrumentLabel(selected)}，可匹配数量 ${formatNumber(selected.openQuantity + editingQuantity)}，买入总成本 ${currency(selected.cashAmount)}。标的信息仍可手动修改。`;
   } else if (matches.length === 0) {
-    elements.fundingMatchHelp.textContent = "没有可匹配买入时仍可保存卖出，但不会计算本次盈亏。";
+    elements.fundingMatchHelp.textContent = "当前标的类型没有可匹配买入；可改为不匹配后保存卖出，但不会计算本次盈亏。";
   } else {
-    elements.fundingMatchHelp.textContent = "可不匹配直接保存；选择买入记录后会计算本次盈亏。";
+    elements.fundingMatchHelp.textContent = "选择买入记录后会自动填入标的信息并计算本次盈亏，字段仍可手动修改。";
   }
 }
 
 function updateFundingFormVisibility() {
   const isOption = elements.fundingAssetType.value === "option";
   const isSell = elements.fundingSide.value === "sell";
+  const isMatching = isSell && elements.fundingMatchEnabled.value === "yes";
 
   elements.fundingOptionFields.hidden = !isOption;
-  elements.fundingMatchFields.hidden = !isSell;
+  elements.fundingMatchFields.hidden = !isMatching;
   elements.fundingQuantityLabel.textContent = isOption ? "份数" : "股数";
   elements.fundingQuantity.placeholder = isOption ? "例如 1" : "例如 100";
 
-  if (isSell) {
+  if (isMatching) {
     updateFundingMatchOptions();
+  } else {
+    elements.fundingMatchTrade.value = "";
   }
 }
 
@@ -660,6 +682,7 @@ function resetFundingForm() {
   elements.fundingCancelEditButton.hidden = true;
   elements.fundingFlowDate.value = new Date().toISOString().slice(0, 10);
   elements.fundingFee.value = "0";
+  elements.fundingMatchEnabled.value = "no";
   updateFundingFormVisibility();
   refreshFundingPreview();
 }
@@ -694,6 +717,7 @@ function startFundingEdit(flow) {
     elements.fundingExpiryDate.value = flow.expiryDate || "";
     elements.fundingOptionType.value = flow.optionType || "call";
     elements.fundingStrike.value = flow.strike || "";
+    elements.fundingMatchEnabled.value = flow.matchedTradeId ? "yes" : "no";
     updateFundingFormVisibility();
     elements.fundingMatchTrade.value = flow.matchedTradeId || "";
   } else {
@@ -706,6 +730,7 @@ function startFundingEdit(flow) {
     elements.fundingExpiryDate.value = "";
     elements.fundingOptionType.value = "call";
     elements.fundingStrike.value = "";
+    elements.fundingMatchEnabled.value = "no";
     updateFundingFormVisibility();
   }
   refreshFundingPreview();
@@ -835,7 +860,7 @@ async function submitFundingFlow(event) {
     body.strike = draft.strike;
   }
 
-  if (body.side === "sell") {
+  if (body.side === "sell" && elements.fundingMatchEnabled.value === "yes") {
     body.matchedTradeId = elements.fundingMatchTrade.value;
   }
 
@@ -959,7 +984,18 @@ elements.fundingFlowForm.addEventListener("submit", (event) => {
 elements.transactionAmount.addEventListener("input", refreshPreview);
 elements.transactionType.addEventListener("change", refreshPreview);
 elements.fundingAssetType.addEventListener("change", refreshFundingPreview);
-elements.fundingSide.addEventListener("change", refreshFundingPreview);
+elements.fundingMatchEnabled.addEventListener("change", () => {
+  if (elements.fundingMatchEnabled.value === "yes") {
+    elements.fundingSide.value = "sell";
+  }
+  refreshFundingPreview();
+});
+elements.fundingSide.addEventListener("change", () => {
+  if (elements.fundingSide.value !== "sell") {
+    elements.fundingMatchEnabled.value = "no";
+  }
+  refreshFundingPreview();
+});
 elements.fundingTicker.addEventListener("input", refreshFundingPreview);
 elements.fundingExpiryDate.addEventListener("input", refreshFundingPreview);
 elements.fundingOptionType.addEventListener("change", refreshFundingPreview);
@@ -967,7 +1003,10 @@ elements.fundingStrike.addEventListener("input", refreshFundingPreview);
 elements.fundingQuantity.addEventListener("input", refreshFundingPreview);
 elements.fundingPrice.addEventListener("input", refreshFundingPreview);
 elements.fundingFee.addEventListener("input", refreshFundingPreview);
-elements.fundingMatchTrade.addEventListener("change", refreshFundingPreview);
+elements.fundingMatchTrade.addEventListener("change", () => {
+  applySelectedMatchToForm();
+  refreshFundingPreview();
+});
 elements.cancelEditButton.addEventListener("click", resetForm);
 elements.fundingCancelEditButton.addEventListener("click", resetFundingForm);
 elements.addYearButton.addEventListener("click", addYear);
