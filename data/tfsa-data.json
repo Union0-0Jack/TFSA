@@ -534,6 +534,22 @@
         "cashAmount": 85.51,
         "type": "outflow",
         "amount": 85.51
+      },
+      {
+        "id": "56c8bbae-31ea-4dad-a9fe-ba8ea4bedcb1",
+        "date": "2026-05-22",
+        "assetType": "stock",
+        "side": "buy",
+        "ticker": "WKEY",
+        "quantity": 100,
+        "price": 10.56,
+        "fee": 0.59,
+        "closeReason": "",
+        "note": "",
+        "matchedTradeId": "",
+        "cashAmount": 1056.59,
+        "type": "outflow",
+        "amount": 1056.59
       }
     ]
   },
