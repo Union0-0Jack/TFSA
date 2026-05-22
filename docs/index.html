@@ -8,6 +8,8 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
+    <button id="exit-button" class="exit-button" type="button">Exit</button>
+
     <div class="page-shell">
       <nav class="tab-bar" aria-label="功能切换">
         <button class="tab-button active" type="button" data-tab="tfsa">TFSA 额度</button>
@@ -228,6 +230,14 @@
               <option value="sell">卖出</option>
             </select>
 
+            <div class="close-fields" id="funding-close-fields" hidden>
+              <label for="funding-close-reason">平仓方式</label>
+              <select id="funding-close-reason">
+                <option value="">正常卖出</option>
+                <option value="expired_worthless">无价值到期</option>
+              </select>
+            </div>
+
             <label for="funding-ticker">Ticker</label>
             <input id="funding-ticker" type="text" placeholder="例如 QCOM" required />
 
@@ -265,7 +275,7 @@
             <input
               id="funding-price"
               type="number"
-              min="0.0001"
+              min="0"
               step="0.0001"
               placeholder="例如 12.35"
               required
@@ -306,13 +316,38 @@
               <p class="section-kicker">资金历史</p>
               <h2>流水</h2>
             </div>
+          </div>
+
+          <div class="history-toolbar">
+            <label class="search-control">
+              搜索
+              <input id="funding-history-search" type="search" placeholder="Ticker / 到期日 / 备注" />
+            </label>
 
             <label class="filter-control">
-              筛选
+              资金
               <select id="funding-type-filter">
                 <option value="all">全部</option>
                 <option value="inflow">仅流入</option>
                 <option value="outflow">仅流出</option>
+              </select>
+            </label>
+
+            <label class="filter-control">
+              状态
+              <select id="funding-status-filter">
+                <option value="all">全部状态</option>
+                <option value="open">正在进行</option>
+                <option value="closed">已结算</option>
+                <option value="cash">普通资金</option>
+              </select>
+            </label>
+
+            <label class="filter-control">
+              时间
+              <select id="funding-sort-mode">
+                <option value="trade">交易时间</option>
+                <option value="expiry">到期时间</option>
               </select>
             </label>
           </div>

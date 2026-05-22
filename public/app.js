@@ -7,6 +7,9 @@ const state = {
   filter: "all",
   fundingSummary: null,
   fundingFilter: "all",
+  fundingSearch: "",
+  fundingSortMode: "trade",
+  fundingStatusFilter: "all",
 };
 
 const STATIC_MODE = Boolean(window.TFSA_STATIC_MODE);
@@ -17,8 +20,11 @@ const elements = {
   cancelEditButton: document.querySelector("#cancel-edit-button"),
   dataPath: document.querySelector("#data-path"),
   editingId: document.querySelector("#editing-id"),
+  exitButton: document.querySelector("#exit-button"),
   fundingBalanceForm: document.querySelector("#funding-balance-form"),
   fundingCancelEditButton: document.querySelector("#funding-cancel-edit-button"),
+  fundingCloseFields: document.querySelector("#funding-close-fields"),
+  fundingCloseReason: document.querySelector("#funding-close-reason"),
   fundingEditingId: document.querySelector("#funding-editing-id"),
   fundingAssetType: document.querySelector("#funding-asset-type"),
   fundingExpiryDate: document.querySelector("#funding-expiry-date"),
@@ -30,6 +36,7 @@ const elements = {
   fundingHistoryEmpty: document.querySelector("#funding-history-empty"),
   fundingHistoryItemTemplate: document.querySelector("#funding-history-item-template"),
   fundingHistoryList: document.querySelector("#funding-history-list"),
+  fundingHistorySearch: document.querySelector("#funding-history-search"),
   fundingMatchEnabled: document.querySelector("#funding-match-enabled"),
   fundingMatchFields: document.querySelector("#funding-match-fields"),
   fundingMatchHelp: document.querySelector("#funding-match-help"),
@@ -48,6 +55,8 @@ const elements = {
   fundingSubmitButton: document.querySelector("#funding-submit-button"),
   fundingSummaryGrid: document.querySelector("#funding-summary-grid"),
   fundingTicker: document.querySelector("#funding-ticker"),
+  fundingSortMode: document.querySelector("#funding-sort-mode"),
+  fundingStatusFilter: document.querySelector("#funding-status-filter"),
   fundingTypeFilter: document.querySelector("#funding-type-filter"),
   formTitle: document.querySelector("#form-title"),
   historyEmpty: document.querySelector("#history-empty"),
@@ -116,6 +125,10 @@ function getTradeCashAmount({ assetType, side, quantity, price, fee }) {
   return Number((side === "buy" ? gross + Number(fee || 0) : gross - Number(fee || 0)).toFixed(2));
 }
 
+function isWorthlessOptionExpiration(flow) {
+  return flow?.assetType === "option" && flow?.side === "sell" && flow?.closeReason === "expired_worthless";
+}
+
 function sameInstrument(left, right) {
   if (!isTradeFlow(left) || !isTradeFlow(right)) {
     return false;
@@ -145,6 +158,7 @@ function getDraftTrade() {
     quantity: Number(elements.fundingQuantity.value),
     price: Number(elements.fundingPrice.value),
     fee: Number(elements.fundingFee.value || 0),
+    closeReason: elements.fundingCloseReason.value,
     expiryDate: elements.fundingExpiryDate.value,
     optionType: elements.fundingOptionType.value,
     strike: Number(elements.fundingStrike.value),
@@ -362,6 +376,9 @@ function getFundingHistoryTitle(flow) {
   }
 
   const unit = flow.assetType === "option" ? "份" : "股";
+  if (isWorthlessOptionExpiration(flow)) {
+    return `${getInstrumentLabel(flow)} · ${formatNumber(flow.quantity)}${unit} · 无价值到期`;
+  }
   return `${getInstrumentLabel(flow)} · ${formatNumber(flow.quantity)}${unit} @ ${currency(flow.price)}`;
 }
 
@@ -375,6 +392,9 @@ function getFundingHistoryDetail(flow) {
   if (flow.side === "buy") {
     parts.push(`已匹配 ${formatNumber(flow.matchedQuantity)}，剩余 ${formatNumber(flow.openQuantity)}`);
   } else if (flow.matchedTradeId) {
+    if (isWorthlessOptionExpiration(flow)) {
+      parts.push("无价值到期");
+    }
     parts.push(`匹配 ${flow.matchedTradeLabel || "买入记录"}`);
     if (Number.isFinite(flow.realizedProfit)) {
       parts.push(`盈亏 ${currency(flow.realizedProfit)}`);
@@ -388,50 +408,363 @@ function getFundingHistoryDetail(flow) {
   return parts.join(" · ") || "无备注";
 }
 
-function renderFundingHistory(summary) {
-  const flows =
-    state.fundingFilter === "all"
-      ? summary.flows
-      : summary.flows.filter((flow) => flow.type === state.fundingFilter);
+function getFundingHistoryType(flow) {
+  if (!isTradeFlow(flow)) {
+    return flow.type === "inflow" ? "流入" : "流出";
+  }
 
-  elements.fundingHistoryList.innerHTML = "";
-  elements.fundingHistoryEmpty.hidden = flows.length > 0;
+  if (isWorthlessOptionExpiration(flow)) {
+    return "到期";
+  }
+
+  return flow.side === "buy" ? "买入" : "卖出";
+}
+
+function getSignedFundingAmount(flow) {
+  return `${flow.type === "inflow" ? "+" : "-"}${currency(flow.amount)}`;
+}
+
+function getEntryFlows(entry) {
+  return entry.kind === "group" ? [entry.buy, ...entry.sells] : [entry.flow];
+}
+
+function getEntryTradeDate(entry) {
+  return getEntryFlows(entry)
+    .map((flow) => flow.date)
+    .sort((left, right) => right.localeCompare(left))[0] || "";
+}
+
+function getEntryExpiryDate(entry) {
+  const optionExpiryDates = getEntryFlows(entry)
+    .filter((flow) => isTradeFlow(flow) && flow.assetType === "option" && flow.expiryDate)
+    .map((flow) => flow.expiryDate)
+    .sort();
+  return optionExpiryDates[0] || "";
+}
+
+function getEntrySortDate(entry) {
+  if (state.fundingSortMode === "expiry") {
+    return getEntryExpiryDate(entry) || getEntryTradeDate(entry);
+  }
+  return getEntryTradeDate(entry);
+}
+
+function getEntryMonthLabel(entry) {
+  const date = getEntrySortDate(entry);
+  if (!date) {
+    return "未注明时间";
+  }
+
+  return new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric",
+    month: "long",
+  }).format(new Date(`${date}T00:00:00`));
+}
+
+function getEntryStatus(entry) {
+  if (entry.kind === "group") {
+    return entry.buy.openQuantity > 0.000001 ? "open" : "closed";
+  }
+
+  const { flow } = entry;
+  if (!isTradeFlow(flow)) {
+    return "cash";
+  }
+
+  if (flow.side === "buy") {
+    return flow.openQuantity > 0.000001 ? "open" : "closed";
+  }
+
+  return "closed";
+}
+
+function getEntryStatusLabel(status) {
+  if (status === "open") {
+    return "正在进行";
+  }
+  if (status === "closed") {
+    return "已结算";
+  }
+  return "普通资金";
+}
+
+function getEntryStatusOrder(status) {
+  if (status === "open") {
+    return 0;
+  }
+  if (status === "closed") {
+    return 1;
+  }
+  return 2;
+}
+
+function getFlowSearchText(flow) {
+  return [
+    getFundingHistoryType(flow),
+    getFundingHistoryTitle(flow),
+    getFundingHistoryDetail(flow),
+    flow.ticker,
+    flow.date,
+    flow.expiryDate,
+    flow.optionType,
+    flow.strike,
+    flow.note,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
+function getEntrySearchText(entry) {
+  return getEntryFlows(entry).map(getFlowSearchText).join(" ");
+}
+
+function getMatchedFundingGroups(flows) {
+  const byId = new Map(flows.map((flow) => [flow.id, flow]));
+  const sellsByBuyId = new Map();
+  const groupedSellIds = new Set();
 
   for (const flow of flows) {
-    const fragment = elements.fundingHistoryItemTemplate.content.cloneNode(true);
-    const item = fragment.querySelector(".history-item");
-    const type = isTradeFlow(flow) ? (flow.side === "buy" ? "买入" : "卖出") : flow.type === "inflow" ? "流入" : "流出";
-    const signedAmount = `${flow.type === "inflow" ? "+" : "-"}${currency(flow.amount)}`;
-    const detail = fragment.querySelector(".history-detail");
-
-    fragment.querySelector(".history-type").textContent = type;
-    fragment.querySelector(".history-date").textContent = formatDate(flow.date);
-    fragment.querySelector(".history-amount").textContent = signedAmount;
-    fragment.querySelector(".history-note").textContent = getFundingHistoryTitle(flow);
-
-    if (isTradeFlow(flow)) {
-      detail.textContent = getFundingHistoryDetail(flow);
-      detail.hidden = false;
-    } else {
-      detail.textContent = "";
-      detail.hidden = true;
-      fragment.querySelector(".history-note").textContent = flow.note || "普通资金记录";
+    if (!isTradeFlow(flow) || flow.side !== "sell" || !flow.matchedTradeId) {
+      continue;
     }
 
-    item.dataset.id = flow.id;
-    item.classList.toggle("outflow", flow.type === "outflow");
-    item.classList.toggle("profit", Number(flow.realizedProfit) > 0);
-    item.classList.toggle("loss", Number(flow.realizedProfit) < 0);
-    const editButton = item.querySelector('[data-action="edit"]');
-    editButton.hidden = !isTradeFlow(flow);
-    editButton.addEventListener("click", () => {
-      startFundingEdit(flow);
-    });
-    item.querySelector('[data-action="delete"]').addEventListener("click", () => {
-      deleteFundingFlow(flow.id);
-    });
+    const buy = byId.get(flow.matchedTradeId);
+    if (!buy || !isTradeFlow(buy) || buy.side !== "buy" || !sameInstrument(buy, flow)) {
+      continue;
+    }
 
-    elements.fundingHistoryList.append(fragment);
+    if (!sellsByBuyId.has(buy.id)) {
+      sellsByBuyId.set(buy.id, []);
+    }
+    sellsByBuyId.get(buy.id).push(flow);
+    groupedSellIds.add(flow.id);
+  }
+
+  return { sellsByBuyId, groupedSellIds };
+}
+
+function getFundingHistoryEntries(flows) {
+  const { sellsByBuyId, groupedSellIds } = getMatchedFundingGroups(flows);
+  const entries = [];
+
+  for (const flow of flows) {
+    if (groupedSellIds.has(flow.id)) {
+      continue;
+    }
+
+    const sells = sellsByBuyId.get(flow.id) || [];
+    if (isTradeFlow(flow) && flow.side === "buy" && sells.length > 0) {
+      entries.push({
+        kind: "group",
+        buy: flow,
+        sells: [...sells].sort((left, right) => left.date.localeCompare(right.date)),
+      });
+    } else {
+      entries.push({ kind: "flow", flow });
+    }
+  }
+
+  return entries;
+}
+
+function fundingEntryMatchesFilter(entry) {
+  if (state.fundingFilter !== "all") {
+    const hasMatchingCashFlow = getEntryFlows(entry).some((flow) => flow.type === state.fundingFilter);
+    if (!hasMatchingCashFlow) {
+      return false;
+    }
+  }
+
+  if (state.fundingStatusFilter !== "all" && getEntryStatus(entry) !== state.fundingStatusFilter) {
+    return false;
+  }
+
+  if (!state.fundingSearch) {
+    return true;
+  }
+
+  return getEntrySearchText(entry).includes(state.fundingSearch);
+}
+
+function compareFundingEntries(left, right) {
+  const statusOrder = getEntryStatusOrder(getEntryStatus(left)) - getEntryStatusOrder(getEntryStatus(right));
+  if (statusOrder !== 0) {
+    return statusOrder;
+  }
+
+  const leftDate = getEntrySortDate(left);
+  const rightDate = getEntrySortDate(right);
+  if (leftDate !== rightDate) {
+    if (state.fundingSortMode === "expiry") {
+      return leftDate.localeCompare(rightDate);
+    }
+    return rightDate.localeCompare(leftDate);
+  }
+
+  const leftLabel = getEntrySearchText(left);
+  const rightLabel = getEntrySearchText(right);
+  return leftLabel.localeCompare(rightLabel);
+}
+
+function attachFundingFlowActions(item, flow) {
+  const editButton = item.querySelector('[data-action="edit"]');
+  editButton.hidden = !isTradeFlow(flow);
+  editButton.addEventListener("click", () => {
+    startFundingEdit(flow);
+  });
+  item.querySelector('[data-action="delete"]').addEventListener("click", () => {
+    deleteFundingFlow(flow.id);
+  });
+}
+
+function renderFundingFlowItem(flow, options = {}) {
+  const fragment = elements.fundingHistoryItemTemplate.content.cloneNode(true);
+  const item = fragment.querySelector(".history-item");
+  const detail = fragment.querySelector(".history-detail");
+  const status = getEntryStatus({ kind: "flow", flow });
+  const meta = fragment.querySelector(".history-meta");
+  const badge = document.createElement("span");
+  badge.className = `history-status history-status-${status}`;
+  badge.textContent = getEntryStatusLabel(status);
+
+  fragment.querySelector(".history-type").textContent = getFundingHistoryType(flow);
+  meta.append(badge);
+  fragment.querySelector(".history-date").textContent = formatDate(flow.date);
+  fragment.querySelector(".history-amount").textContent = getSignedFundingAmount(flow);
+  fragment.querySelector(".history-note").textContent = getFundingHistoryTitle(flow);
+
+  if (isTradeFlow(flow)) {
+    detail.textContent = getFundingHistoryDetail(flow);
+    detail.hidden = false;
+  } else {
+    detail.textContent = "";
+    detail.hidden = true;
+    fragment.querySelector(".history-note").textContent = flow.note || "普通资金记录";
+  }
+
+  item.dataset.id = flow.id;
+  item.classList.toggle("outflow", flow.type === "outflow");
+  item.classList.toggle("profit", Number(flow.realizedProfit) > 0);
+  item.classList.toggle("loss", Number(flow.realizedProfit) < 0);
+  item.classList.toggle("history-child", options.child === true);
+  attachFundingFlowActions(item, flow);
+  return fragment;
+}
+
+function renderFundingGroupItem(entry) {
+  const { buy, sells } = entry;
+  const status = getEntryStatus(entry);
+  const details = document.createElement("details");
+  details.className = "history-item history-group";
+  details.dataset.id = buy.id;
+
+  const summary = document.createElement("summary");
+  summary.className = "history-group-summary";
+
+  const main = document.createElement("div");
+  main.className = "history-main";
+
+  const meta = document.createElement("div");
+  meta.className = "history-meta";
+
+  const type = document.createElement("span");
+  type.className = "history-type";
+  type.textContent = "匹配组合";
+
+  const badge = document.createElement("span");
+  badge.className = `history-status history-status-${status}`;
+  badge.textContent = getEntryStatusLabel(status);
+
+  const date = document.createElement("time");
+  date.className = "history-date";
+  const firstSellDate = sells[0]?.date || buy.date;
+  const lastSellDate = sells[sells.length - 1]?.date || buy.date;
+  date.textContent = `${formatDate(buy.date)} - ${formatDate(lastSellDate || firstSellDate)}`;
+
+  meta.append(type, badge, date);
+
+  const profit = sells.reduce(
+    (total, flow) => total + (Number.isFinite(flow.realizedProfit) ? flow.realizedProfit : 0),
+    0
+  );
+  const netCash = sells.reduce((total, flow) => total + flow.amount, 0) - buy.amount;
+  const amount = document.createElement("strong");
+  amount.className = "history-amount";
+  amount.textContent = `净 ${currency(netCash)}`;
+
+  const note = document.createElement("p");
+  note.className = "history-note";
+  const expiryText = buy.assetType === "option" ? ` · 到期 ${formatDate(buy.expiryDate)}` : "";
+  note.textContent = `${getInstrumentLabel(buy)}${expiryText} · 买入 ${formatNumber(buy.quantity)}，已匹配 ${formatNumber(buy.matchedQuantity)}，剩余 ${formatNumber(buy.openQuantity)}`;
+
+  const detail = document.createElement("p");
+  detail.className = "history-detail";
+  detail.textContent = `匹配 ${sells.length} 条 · 盈亏 ${currency(profit)}`;
+
+  main.append(meta, amount, note, detail);
+
+  const toggle = document.createElement("span");
+  toggle.className = "history-expand";
+  toggle.textContent = "详情";
+
+  summary.append(main, toggle);
+  details.append(summary);
+
+  const children = document.createElement("div");
+  children.className = "history-group-children";
+  children.append(renderFundingFlowItem(buy, { child: true }));
+  for (const sell of sells) {
+    children.append(renderFundingFlowItem(sell, { child: true }));
+  }
+  details.append(children);
+
+  details.classList.toggle("profit", profit > 0);
+  details.classList.toggle("loss", profit < 0);
+  details.classList.toggle("outflow", netCash < 0);
+  return details;
+}
+
+function renderFundingSectionHeader(status, month, entries) {
+  const header = document.createElement("div");
+  header.className = "history-section-heading";
+
+  const title = document.createElement("strong");
+  title.textContent = `${getEntryStatusLabel(status)} · ${month}`;
+
+  const count = document.createElement("span");
+  count.textContent = `${entries.length} 条`;
+
+  header.append(title, count);
+  return header;
+}
+
+function renderFundingHistory(summary) {
+  const entries = getFundingHistoryEntries(summary.flows)
+    .filter(fundingEntryMatchesFilter)
+    .sort(compareFundingEntries);
+
+  elements.fundingHistoryList.innerHTML = "";
+  elements.fundingHistoryEmpty.hidden = entries.length > 0;
+  elements.fundingHistoryEmpty.textContent =
+    summary.flows.length === 0 ? "还没有资金流入或流出记录。" : "没有符合当前筛选条件的记录。";
+
+  let currentSectionKey = "";
+  for (const entry of entries) {
+    const status = getEntryStatus(entry);
+    const month = getEntryMonthLabel(entry);
+    const sectionKey = `${status}:${month}`;
+    if (sectionKey !== currentSectionKey) {
+      const sectionEntries = entries.filter(
+        (candidate) => getEntryStatus(candidate) === status && getEntryMonthLabel(candidate) === month
+      );
+      elements.fundingHistoryList.append(renderFundingSectionHeader(status, month, sectionEntries));
+      currentSectionKey = sectionKey;
+    }
+
+    elements.fundingHistoryList.append(
+      entry.kind === "group" ? renderFundingGroupItem(entry) : renderFundingFlowItem(entry.flow)
+    );
   }
 }
 
@@ -479,28 +812,39 @@ function refreshPreview() {
 }
 
 function refreshFundingPreview() {
-  const draft = getDraftTrade();
   const summary = state.fundingSummary;
 
   elements.fundingPreviewPanel.className = "preview-panel";
 
   updateFundingFormVisibility();
 
+  const draft = getDraftTrade();
+  const isWorthlessExpiration = isWorthlessOptionExpiration(draft);
+  const hasValidPrice =
+    Number.isFinite(draft.price) && draft.price >= 0 && (isWorthlessExpiration || draft.price > 0);
+
   if (
     !summary ||
     !Number.isFinite(draft.quantity) ||
-    !Number.isFinite(draft.price) ||
+    !hasValidPrice ||
     draft.quantity <= 0 ||
-    draft.price <= 0 ||
     draft.fee < 0
   ) {
-    elements.fundingPreviewPanel.textContent = "输入数量和成交价后，这里会显示现金流、余额和匹配预估。";
+    elements.fundingPreviewPanel.textContent = isWorthlessExpiration
+      ? "选择买入记录并输入到期份数后，这里会显示归零到期的亏损预估。"
+      : "输入数量和成交价后，这里会显示现金流、余额和匹配预估。";
     return;
   }
 
   const amount = getTradeCashAmount(draft);
-  if (amount <= 0) {
+  if (amount < 0 || (amount === 0 && !isWorthlessExpiration)) {
     elements.fundingPreviewPanel.textContent = "扣除手续费后的现金金额必须大于 0。";
+    elements.fundingPreviewPanel.classList.add("danger");
+    return;
+  }
+
+  if (isWorthlessExpiration && draft.fee !== 0) {
+    elements.fundingPreviewPanel.textContent = "无价值到期没有成交现金流，手续费请填 0。";
     elements.fundingPreviewPanel.classList.add("danger");
     return;
   }
@@ -521,14 +865,18 @@ function refreshFundingPreview() {
   if (draft.side === "sell") {
     const match = getSelectedMatch();
     if (!match) {
-      elements.fundingPreviewPanel.textContent = `${cashText}，预计资金余额 ${currency(currentBalance)}。未匹配买入记录，本次不会计算盈亏。`;
+      elements.fundingPreviewPanel.textContent = isWorthlessExpiration
+        ? "无价值到期需要匹配对应买入记录，才能扣减持仓并计算亏损。"
+        : `${cashText}，预计资金余额 ${currency(currentBalance)}。未匹配买入记录，本次不会计算盈亏。`;
       elements.fundingPreviewPanel.classList.add("warn");
       return;
     }
 
     const allocatedCost = (match.cashAmount * draft.quantity) / match.quantity;
     const profit = amount - allocatedCost;
-    elements.fundingPreviewPanel.textContent = `${cashText}，预计资金余额 ${currency(currentBalance)}，本次盈亏 ${currency(profit)}。`;
+    elements.fundingPreviewPanel.textContent = isWorthlessExpiration
+      ? `无现金流，预计资金余额 ${currency(currentBalance)}，本次亏损 ${currency(Math.abs(profit))}。`
+      : `${cashText}，预计资金余额 ${currency(currentBalance)}，本次盈亏 ${currency(profit)}。`;
   } else {
     elements.fundingPreviewPanel.textContent = `${cashText}，保存后预计资金余额 ${currency(currentBalance)}。`;
   }
@@ -583,7 +931,35 @@ function getCandidateMatches() {
         current?.side === "sell" && current.matchedTradeId === flow.id ? current.quantity : 0;
       return flow.openQuantity + editingQuantity > 0;
     })
-    .sort((left, right) => left.date.localeCompare(right.date));
+    .sort(compareCandidateMatches);
+}
+
+function compareCandidateMatches(left, right) {
+  if (left.assetType === "option" && right.assetType === "option") {
+    const expiryOrder = left.expiryDate.localeCompare(right.expiryDate);
+    if (expiryOrder !== 0) {
+      return expiryOrder;
+    }
+  }
+
+  const tickerOrder = left.ticker.localeCompare(right.ticker);
+  if (tickerOrder !== 0) {
+    return tickerOrder;
+  }
+
+  if (left.assetType === "option" && right.assetType === "option") {
+    const strikeOrder = Number(left.strike) - Number(right.strike);
+    if (strikeOrder !== 0) {
+      return strikeOrder;
+    }
+
+    const typeOrder = left.optionType.localeCompare(right.optionType);
+    if (typeOrder !== 0) {
+      return typeOrder;
+    }
+  }
+
+  return left.date.localeCompare(right.date);
 }
 
 function getSelectedMatch() {
@@ -650,10 +1026,23 @@ function updateFundingMatchOptions() {
 function updateFundingFormVisibility() {
   const isOption = elements.fundingAssetType.value === "option";
   const isSell = elements.fundingSide.value === "sell";
+  const canExpireWorthless = isOption && isSell;
+
+  if (!canExpireWorthless) {
+    elements.fundingCloseReason.value = "";
+  }
+
+  if (elements.fundingCloseReason.value === "expired_worthless") {
+    elements.fundingMatchEnabled.value = "yes";
+    elements.fundingPrice.value = "0";
+    elements.fundingFee.value = "0";
+  }
+
   const isMatching = isSell && elements.fundingMatchEnabled.value === "yes";
 
   elements.fundingOptionFields.hidden = !isOption;
   elements.fundingMatchFields.hidden = !isMatching;
+  elements.fundingCloseFields.hidden = !canExpireWorthless;
   elements.fundingQuantityLabel.textContent = isOption ? "份数" : "股数";
   elements.fundingQuantity.placeholder = isOption ? "例如 1" : "例如 100";
 
@@ -682,6 +1071,7 @@ function resetFundingForm() {
   elements.fundingCancelEditButton.hidden = true;
   elements.fundingFlowDate.value = new Date().toISOString().slice(0, 10);
   elements.fundingFee.value = "0";
+  elements.fundingCloseReason.value = "";
   elements.fundingMatchEnabled.value = "no";
   updateFundingFormVisibility();
   refreshFundingPreview();
@@ -714,6 +1104,7 @@ function startFundingEdit(flow) {
     elements.fundingQuantity.value = flow.quantity;
     elements.fundingPrice.value = flow.price;
     elements.fundingFee.value = flow.fee;
+    elements.fundingCloseReason.value = flow.closeReason || "";
     elements.fundingExpiryDate.value = flow.expiryDate || "";
     elements.fundingOptionType.value = flow.optionType || "call";
     elements.fundingStrike.value = flow.strike || "";
@@ -727,6 +1118,7 @@ function startFundingEdit(flow) {
     elements.fundingQuantity.value = "";
     elements.fundingPrice.value = "";
     elements.fundingFee.value = "0";
+    elements.fundingCloseReason.value = "";
     elements.fundingExpiryDate.value = "";
     elements.fundingOptionType.value = "call";
     elements.fundingStrike.value = "";
@@ -851,6 +1243,7 @@ async function submitFundingFlow(event) {
     quantity: draft.quantity,
     price: draft.price,
     fee: draft.fee,
+    closeReason: draft.closeReason,
     note: elements.fundingFlowNote.value.trim(),
   };
 
@@ -864,8 +1257,14 @@ async function submitFundingFlow(event) {
     body.matchedTradeId = elements.fundingMatchTrade.value;
   }
 
-  if (!body.date || !body.ticker || !Number.isFinite(body.quantity) || body.quantity <= 0 || !Number.isFinite(body.price) || body.price <= 0 || body.fee < 0) {
+  const isWorthlessExpiration = isWorthlessOptionExpiration(body);
+  if (!body.date || !body.ticker || !Number.isFinite(body.quantity) || body.quantity <= 0 || !Number.isFinite(body.price) || body.price < 0 || (!isWorthlessExpiration && body.price <= 0) || body.fee < 0) {
     window.alert("请填写有效的日期、Ticker、数量、成交价和手续费。");
+    return;
+  }
+
+  if (isWorthlessExpiration && (!body.matchedTradeId || body.price !== 0 || body.fee !== 0)) {
+    window.alert("无价值到期需要匹配买入记录，成交价和手续费都应为 0。");
     return;
   }
 
@@ -922,6 +1321,24 @@ async function deleteFundingFlow(flowId) {
   resetFundingForm();
 }
 
+async function exitApp() {
+  const confirmed = window.confirm("确定退出 TFSA 并关闭本地服务吗？");
+  if (!confirmed) {
+    return;
+  }
+
+  elements.exitButton.disabled = true;
+  elements.exitButton.textContent = "Exiting";
+
+  await request("/api/exit", {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+
+  document.body.innerHTML = '<main class="exit-screen"><h1>TFSA 已退出</h1><p>可以关闭这个浏览器标签页。</p></main>';
+  window.close();
+}
+
 function addYear() {
   const input = window.prompt("输入要新增/查看的年份，例如 2027");
   if (!input) {
@@ -969,6 +1386,24 @@ elements.fundingTypeFilter.addEventListener("change", (event) => {
     renderFundingHistory(state.fundingSummary);
   }
 });
+elements.fundingStatusFilter.addEventListener("change", (event) => {
+  state.fundingStatusFilter = event.target.value;
+  if (state.fundingSummary) {
+    renderFundingHistory(state.fundingSummary);
+  }
+});
+elements.fundingSortMode.addEventListener("change", (event) => {
+  state.fundingSortMode = event.target.value;
+  if (state.fundingSummary) {
+    renderFundingHistory(state.fundingSummary);
+  }
+});
+elements.fundingHistorySearch.addEventListener("input", (event) => {
+  state.fundingSearch = event.target.value.trim().toLowerCase();
+  if (state.fundingSummary) {
+    renderFundingHistory(state.fundingSummary);
+  }
+});
 elements.roomForm.addEventListener("submit", (event) => {
   saveRoom(event).catch(showError);
 });
@@ -996,6 +1431,15 @@ elements.fundingSide.addEventListener("change", () => {
   }
   refreshFundingPreview();
 });
+elements.fundingCloseReason.addEventListener("change", () => {
+  if (elements.fundingCloseReason.value === "expired_worthless") {
+    elements.fundingSide.value = "sell";
+    elements.fundingMatchEnabled.value = "yes";
+    elements.fundingPrice.value = "0";
+    elements.fundingFee.value = "0";
+  }
+  refreshFundingPreview();
+});
 elements.fundingTicker.addEventListener("input", refreshFundingPreview);
 elements.fundingExpiryDate.addEventListener("input", refreshFundingPreview);
 elements.fundingOptionType.addEventListener("change", refreshFundingPreview);
@@ -1010,6 +1454,9 @@ elements.fundingMatchTrade.addEventListener("change", () => {
 elements.cancelEditButton.addEventListener("click", resetForm);
 elements.fundingCancelEditButton.addEventListener("click", resetFundingForm);
 elements.addYearButton.addEventListener("click", addYear);
+elements.exitButton.addEventListener("click", () => {
+  exitApp().catch(showError);
+});
 
 resetForm();
 resetFundingForm();

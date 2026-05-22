@@ -341,6 +341,57 @@ test("one buy can be partially matched by multiple sells", () => {
   assert.equal(summary.realizedProfit, 30);
 });
 
+test("worthless option expiration closes matched quantity with zero proceeds", () => {
+  const data = createEmptyData();
+  addFundingFlow(data, {
+    id: "buy",
+    date: "2026-04-01",
+    assetType: "option",
+    side: "buy",
+    ticker: "QCOM",
+    expiryDate: "2026-05-15",
+    optionType: "call",
+    strike: 300,
+    quantity: 1,
+    price: 1.25,
+    fee: 1,
+    type: "outflow",
+    amount: 126,
+    cashAmount: 126,
+    note: "",
+    matchedTradeId: "",
+  });
+  addFundingFlow(data, {
+    id: "expiry",
+    date: "2026-05-15",
+    assetType: "option",
+    side: "sell",
+    ticker: "QCOM",
+    expiryDate: "2026-05-15",
+    optionType: "call",
+    strike: 300,
+    quantity: 1,
+    price: 0,
+    fee: 0,
+    closeReason: "expired_worthless",
+    type: "inflow",
+    amount: 0,
+    cashAmount: 0,
+    note: "",
+    matchedTradeId: "buy",
+  });
+
+  const summary = calculateFundingSummary(data.funding);
+  const buy = summary.flows.find((flow) => flow.id === "buy");
+  const expiry = summary.flows.find((flow) => flow.id === "expiry");
+
+  assert.equal(summary.inflows, 0);
+  assert.equal(summary.realizedProfit, -126);
+  assert.equal(buy.openQuantity, 0);
+  assert.equal(expiry.allocatedCost, 126);
+  assert.equal(expiry.realizedProfit, -126);
+});
+
 test("unmatched sells count as inflows without realized profit", () => {
   const data = createEmptyData();
   addFundingFlow(data, {

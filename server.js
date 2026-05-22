@@ -103,6 +103,14 @@ function validatePositiveNumber(value) {
   return number;
 }
 
+function validateNonNegativeNumber(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0) {
+    return null;
+  }
+  return number;
+}
+
 function validateTransactionPayload(body) {
   const year = validateYear(body.year);
   const amount = validateAmount(body.amount);
@@ -190,7 +198,11 @@ function validateFundingFlowPayload(body, data, currentFlowId = "") {
   const side = body.side === "sell" ? "sell" : body.side === "buy" ? "buy" : null;
   const ticker = typeof body.ticker === "string" ? body.ticker.trim().toUpperCase() : "";
   const quantity = validatePositiveNumber(body.quantity);
-  const price = validatePositiveNumber(body.price);
+  const closeReason = body.closeReason === "expired_worthless" ? "expired_worthless" : "";
+  const isWorthlessExpiration = assetType === "option" && side === "sell" && closeReason === "expired_worthless";
+  const price = isWorthlessExpiration
+    ? validateNonNegativeNumber(body.price)
+    : validatePositiveNumber(body.price);
   const fee = validateAmount(body.fee || 0);
   const note = typeof body.note === "string" ? body.note.trim() : "";
   const value = {
@@ -201,6 +213,7 @@ function validateFundingFlowPayload(body, data, currentFlowId = "") {
     quantity,
     price,
     fee,
+    closeReason: isWorthlessExpiration ? closeReason : "",
     note,
     matchedTradeId: typeof body.matchedTradeId === "string" ? body.matchedTradeId : "",
   };
@@ -222,7 +235,7 @@ function validateFundingFlowPayload(body, data, currentFlowId = "") {
   }
 
   if (price === null) {
-    return { error: "成交价必须大于 0。" };
+    return { error: isWorthlessExpiration ? "成交价必须为 0 或正数。" : "成交价必须大于 0。" };
   }
 
   if (fee === null) {
@@ -251,7 +264,11 @@ function validateFundingFlowPayload(body, data, currentFlowId = "") {
   value.type = side === "buy" ? "outflow" : "inflow";
   value.amount = value.cashAmount;
 
-  if (value.amount <= 0) {
+  if (isWorthlessExpiration && (!value.matchedTradeId || value.price !== 0 || value.fee !== 0 || value.amount !== 0)) {
+    return { error: "无价值到期需要匹配买入记录，成交价和手续费都必须为 0。" };
+  }
+
+  if (value.amount < 0 || (value.amount === 0 && !isWorthlessExpiration)) {
     return { error: "扣除手续费后的现金金额必须大于 0。" };
   }
 
@@ -350,6 +367,16 @@ async function serveStatic(request, response, pathname) {
 
 async function handleApi(request, response, pathname) {
   const url = new URL(request.url, `http://${request.headers.host}`);
+
+  if (pathname === "/api/exit" && request.method === "POST") {
+    sendJson(response, 200, { ok: true });
+    setTimeout(() => {
+      server.close(() => {
+        process.exit(0);
+      });
+    }, 100);
+    return;
+  }
 
   if (pathname === "/api/data" && request.method === "GET") {
     const data = await readData();
