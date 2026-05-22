@@ -515,6 +515,25 @@
         "cashAmount": 449.09,
         "type": "outflow",
         "amount": 449.09
+      },
+      {
+        "id": "30023e58-60db-4a01-a427-606a047d52db",
+        "date": "2026-05-22",
+        "assetType": "option",
+        "side": "buy",
+        "ticker": "SOXS",
+        "quantity": 10,
+        "price": 0.08,
+        "fee": 5.51,
+        "closeReason": "",
+        "note": "",
+        "matchedTradeId": "",
+        "expiryDate": "2026-06-18",
+        "optionType": "call",
+        "strike": 20,
+        "cashAmount": 85.51,
+        "type": "outflow",
+        "amount": 85.51
       }
     ]
   },
