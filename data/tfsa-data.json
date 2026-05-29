@@ -702,6 +702,25 @@
         "cashAmount": 2275.44,
         "type": "inflow",
         "amount": 2275.44
+      },
+      {
+        "id": "a1984fc2-836d-4cea-9941-147d3b7923c3",
+        "date": "2026-05-29",
+        "assetType": "option",
+        "side": "buy",
+        "ticker": "PSKY",
+        "quantity": 3,
+        "price": 0.35,
+        "fee": 1.25,
+        "closeReason": "",
+        "note": "",
+        "matchedTradeId": "",
+        "expiryDate": "2026-06-18",
+        "optionType": "call",
+        "strike": 11,
+        "cashAmount": 106.25,
+        "type": "outflow",
+        "amount": 106.25
       }
     ]
   },
