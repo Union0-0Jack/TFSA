@@ -1,10 +1,12 @@
 const state = {
-  activeTab: "tfsa",
+  activeTab: "funding",
   selectedYear: new Date().getFullYear(),
   availableYears: [],
   summary: null,
   yearData: null,
   filter: "all",
+  fundingAccounts: [],
+  selectedFundingAccountId: "",
   fundingSummary: null,
   fundingFilter: "all",
   fundingSearch: "",
@@ -21,6 +23,8 @@ const elements = {
   dataPath: document.querySelector("#data-path"),
   editingId: document.querySelector("#editing-id"),
   exitButton: document.querySelector("#exit-button"),
+  fundingAccountSelect: document.querySelector("#funding-account-select"),
+  fundingAddAccountButton: document.querySelector("#funding-add-account-button"),
   fundingBalanceForm: document.querySelector("#funding-balance-form"),
   fundingCancelEditButton: document.querySelector("#funding-cancel-edit-button"),
   fundingCloseFields: document.querySelector("#funding-close-fields"),
@@ -48,6 +52,7 @@ const elements = {
   fundingPreviewPanel: document.querySelector("#funding-preview-panel"),
   fundingQuantity: document.querySelector("#funding-quantity"),
   fundingQuantityLabel: document.querySelector("#funding-quantity-label"),
+  fundingRenameAccountButton: document.querySelector("#funding-rename-account-button"),
   fundingSide: document.querySelector("#funding-side"),
   fundingStartingBalance: document.querySelector("#funding-starting-balance"),
   fundingStatusPill: document.querySelector("#funding-status-pill"),
@@ -236,7 +241,12 @@ async function staticRequest(url, options = {}) {
   }
 
   if (parsedUrl.pathname.endsWith("/api/funding")) {
-    return staticData.fundingPayload;
+    const requestedAccountId = parsedUrl.searchParams.get("accountId") || staticData.defaultFundingAccountId;
+    return (
+      staticData.fundingPayloads?.[requestedAccountId] ||
+      staticData.fundingPayloads?.[staticData.defaultFundingAccountId] ||
+      staticData.fundingPayload
+    );
   }
 
   throw new Error("GitHub Pages 共享版没有这个接口。");
@@ -340,6 +350,27 @@ function switchTab(tab) {
   }
 }
 
+function renderFundingAccounts(payload) {
+  state.fundingAccounts = payload.fundingAccounts || [];
+  state.selectedFundingAccountId = payload.activeAccountId || state.fundingAccounts[0]?.id || "";
+
+  elements.fundingAccountSelect.innerHTML = "";
+  for (const account of state.fundingAccounts) {
+    const option = document.createElement("option");
+    option.value = account.id;
+    option.textContent = account.name;
+    option.selected = account.id === state.selectedFundingAccountId;
+    elements.fundingAccountSelect.append(option);
+  }
+}
+
+function getSelectedFundingAccount() {
+  return (
+    state.fundingAccounts.find((account) => account.id === state.selectedFundingAccountId) ||
+    null
+  );
+}
+
 function updateFundingStatus(summary) {
   elements.fundingStatusPill.className = "status-pill";
   elements.fundingStatusPill.textContent = `当前余额 ${currency(summary.currentBalance)}`;
@@ -352,12 +383,13 @@ function updateFundingStatus(summary) {
 function renderFundingSummary(summary) {
   elements.fundingStartingBalance.value = summary.startingBalance || "";
   updateFundingStatus(summary);
+  const accountName = summary.accountName || getSelectedFundingAccount()?.name || "当前账户";
 
   const stats = [
-    { label: "初始资金余额", value: currency(summary.startingBalance) },
+    { label: `${accountName} 初始余额`, value: currency(summary.startingBalance) },
     { label: "累计流入", value: currency(summary.inflows) },
     { label: "累计流出", value: currency(summary.outflows) },
-    { label: "当前资金余额", value: currency(summary.currentBalance) },
+    { label: "当前账户余额", value: currency(summary.currentBalance) },
     { label: "已实现盈亏", value: currency(summary.realizedProfit) },
   ];
 
@@ -1144,8 +1176,10 @@ async function loadYear(year = state.selectedYear) {
   refreshPreview();
 }
 
-async function loadFunding() {
-  const payload = await request("/api/funding");
+async function loadFunding(accountId = state.selectedFundingAccountId) {
+  const query = accountId ? `?accountId=${encodeURIComponent(accountId)}` : "";
+  const payload = await request(`/api/funding${query}`);
+  renderFundingAccounts(payload);
   state.fundingSummary = payload.fundingSummary;
 
   renderFundingSummary(payload.fundingSummary);
@@ -1221,10 +1255,12 @@ async function saveFundingBalance(event) {
   const payload = await request("/api/funding/balance", {
     method: "PUT",
     body: JSON.stringify({
+      accountId: state.selectedFundingAccountId,
       startingBalance: amount,
     }),
   });
 
+  renderFundingAccounts(payload);
   state.fundingSummary = payload.fundingSummary;
   renderFundingSummary(payload.fundingSummary);
   renderFundingHistory(payload.fundingSummary);
@@ -1236,6 +1272,7 @@ async function submitFundingFlow(event) {
   const draft = getDraftTrade();
 
   const body = {
+    accountId: state.selectedFundingAccountId,
     date: elements.fundingFlowDate.value,
     assetType: draft.assetType,
     side: draft.side,
@@ -1282,6 +1319,7 @@ async function submitFundingFlow(event) {
     body: JSON.stringify(body),
   });
 
+  renderFundingAccounts(payload);
   state.fundingSummary = payload.fundingSummary;
   renderFundingSummary(payload.fundingSummary);
   renderFundingHistory(payload.fundingSummary);
@@ -1311,14 +1349,64 @@ async function deleteFundingFlow(flowId) {
     return;
   }
 
-  const payload = await request(`/api/funding/flows/${flowId}`, {
+  const accountQuery = state.selectedFundingAccountId
+    ? `?accountId=${encodeURIComponent(state.selectedFundingAccountId)}`
+    : "";
+  const payload = await request(`/api/funding/flows/${flowId}${accountQuery}`, {
     method: "DELETE",
   });
 
+  renderFundingAccounts(payload);
   state.fundingSummary = payload.fundingSummary;
   renderFundingSummary(payload.fundingSummary);
   renderFundingHistory(payload.fundingSummary);
   resetFundingForm();
+}
+
+async function addFundingAccount() {
+  const input = window.prompt("输入新账户名称");
+  const name = input?.trim();
+
+  if (!name) {
+    window.alert("账户名称不能为空。");
+    return;
+  }
+
+  const payload = await request("/api/funding/accounts", {
+    method: "POST",
+    body: JSON.stringify({ name }),
+  });
+
+  renderFundingAccounts(payload);
+  state.fundingSummary = payload.fundingSummary;
+  renderFundingSummary(payload.fundingSummary);
+  renderFundingHistory(payload.fundingSummary);
+  resetFundingForm();
+}
+
+async function renameFundingAccount() {
+  const account = getSelectedFundingAccount();
+  if (!account) {
+    return;
+  }
+
+  const input = window.prompt("输入账户新名称", account.name);
+  const name = input?.trim();
+
+  if (!name) {
+    window.alert("账户名称不能为空。");
+    return;
+  }
+
+  const payload = await request(`/api/funding/accounts/${encodeURIComponent(account.id)}`, {
+    method: "PUT",
+    body: JSON.stringify({ name }),
+  });
+
+  renderFundingAccounts(payload);
+  state.fundingSummary = payload.fundingSummary;
+  renderFundingSummary(payload.fundingSummary);
+  renderFundingHistory(payload.fundingSummary);
 }
 
 async function exitApp() {
@@ -1374,6 +1462,11 @@ for (const button of elements.tabButtons) {
     switchTab(button.dataset.tab);
   });
 }
+elements.fundingAccountSelect.addEventListener("change", (event) => {
+  state.selectedFundingAccountId = event.target.value;
+  resetFundingForm();
+  loadFunding(state.selectedFundingAccountId).catch(showError);
+});
 elements.typeFilter.addEventListener("change", (event) => {
   state.filter = event.target.value;
   if (state.summary) {
@@ -1412,6 +1505,12 @@ elements.transactionForm.addEventListener("submit", (event) => {
 });
 elements.fundingBalanceForm.addEventListener("submit", (event) => {
   saveFundingBalance(event).catch(showError);
+});
+elements.fundingAddAccountButton.addEventListener("click", () => {
+  addFundingAccount().catch(showError);
+});
+elements.fundingRenameAccountButton.addEventListener("click", () => {
+  renameFundingAccount().catch(showError);
 });
 elements.fundingFlowForm.addEventListener("submit", (event) => {
   submitFundingFlow(event).catch(showError);
@@ -1461,6 +1560,6 @@ elements.exitButton.addEventListener("click", () => {
 resetForm();
 resetFundingForm();
 disableNumberInputWheel();
-switchTab("tfsa");
+switchTab("funding");
 loadYear().catch(showError);
 loadFunding().catch(showError);

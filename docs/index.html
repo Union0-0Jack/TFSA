@@ -12,11 +12,11 @@
 
     <div class="page-shell">
       <nav class="tab-bar" aria-label="功能切换">
-        <button class="tab-button active" type="button" data-tab="tfsa">TFSA 额度</button>
-        <button class="tab-button" type="button" data-tab="funding">资金余额</button>
+        <button class="tab-button active" type="button" data-tab="funding">交易记录</button>
+        <button class="tab-button" type="button" data-tab="tfsa">TFSA 额度</button>
       </nav>
 
-      <section id="tfsa-panel" class="tab-panel">
+      <section id="tfsa-panel" class="tab-panel" hidden>
         <header class="hero">
           <div>
             <p class="eyebrow">TFSA Contribution Tracker</p>
@@ -143,20 +143,28 @@
         </main>
       </section>
 
-      <section id="funding-panel" class="tab-panel" hidden>
+      <section id="funding-panel" class="tab-panel">
         <header class="hero funding-hero">
           <div>
-            <p class="eyebrow">Funding Balance Tracker</p>
-            <h1>资金余额</h1>
+            <p class="eyebrow">Trading Record Tracker</p>
+            <h1>交易记录</h1>
             <p class="hero-copy">
-              独立记录可投入资金的初始余额、流入、流出和当前剩余金额。
+              按账户记录买卖操作、资金流、当前余额和已实现盈亏。
             </p>
           </div>
 
           <section class="info-panel">
-            <p class="section-kicker">独立功能</p>
-            <p class="hero-copy compact-copy">
-              这里的数据不会改变 TFSA 年度额度，也不会跟随年份切换。
+            <p class="section-kicker">账户</p>
+            <label for="funding-account-select">当前账户</label>
+            <div class="account-controls">
+              <select id="funding-account-select"></select>
+              <button id="funding-add-account-button" type="button">新增账户</button>
+              <button id="funding-rename-account-button" class="ghost-button" type="button">
+                重命名
+              </button>
+            </div>
+            <p class="field-help compact-copy">
+              每个账户的交易、匹配记录和盈亏统计相互独立。
             </p>
           </section>
         </header>
@@ -166,7 +174,7 @@
           <div class="card-heading">
             <div>
               <p class="section-kicker">资金仪表盘</p>
-              <h2>投入资金余额</h2>
+              <h2>账户资金余额</h2>
             </div>
             <span class="status-pill" id="funding-status-pill">载入中</span>
           </div>
@@ -185,7 +193,7 @@
               <button type="submit">保存余额</button>
             </div>
             <p class="field-help">
-              这里记录你开始使用本工具时，可用于投入的资金余额。
+              这里记录当前账户开始使用本工具时，可用于投入的资金余额。
             </p>
           </form>
 

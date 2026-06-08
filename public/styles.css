@@ -165,6 +165,13 @@ h1 {
   margin: 10px 0;
 }
 
+.account-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 10px;
+  margin: 10px 0;
+}
+
 .data-path {
   margin: 0;
   font-size: 0.88rem;
@@ -504,6 +511,8 @@ h1 {
 .static-readonly #room-form,
 .static-readonly #funding-balance-form,
 .static-readonly #add-year-button,
+.static-readonly #funding-add-account-button,
+.static-readonly #funding-rename-account-button,
 .static-readonly #exit-button,
 .static-readonly .history-actions {
   display: none;
@@ -549,6 +558,7 @@ h1 {
   }
 
   .year-controls,
+  .account-controls,
   .inline-form,
   .form-actions,
   .tab-bar,
@@ -559,6 +569,10 @@ h1 {
   }
 
   .history-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .account-controls {
     grid-template-columns: 1fr;
   }
 }

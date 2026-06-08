@@ -5,6 +5,7 @@ const http = require("node:http");
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
 const {
+  addFundingAccount,
   addFundingFlow,
   addTransaction,
   calculateFundingSummary,
@@ -14,8 +15,11 @@ const {
   deleteFundingFlow,
   deleteTransaction,
   ensureDataShape,
+  getFundingAccount,
+  getFundingAccounts,
   getOrCreateYear,
   isTradeFlow,
+  renameFundingAccount,
   sameInstrument,
   setFundingStartingBalance,
   setStartingContributionRoom,
@@ -93,6 +97,14 @@ function validateAmount(value) {
     return null;
   }
   return Number(amount.toFixed(2));
+}
+
+function validateAccountName(value) {
+  const name = typeof value === "string" ? value.trim() : "";
+  if (!name) {
+    return null;
+  }
+  return name.slice(0, 40);
 }
 
 function validatePositiveNumber(value) {
@@ -188,7 +200,7 @@ function validateLegacyFundingFlowPayload(body) {
   };
 }
 
-function validateFundingFlowPayload(body, data, currentFlowId = "") {
+function validateFundingFlowPayload(body, data, currentFlowId = "", accountId = "") {
   if (body.assetType !== "stock" && body.assetType !== "option") {
     return validateLegacyFundingFlowPayload(body);
   }
@@ -272,7 +284,8 @@ function validateFundingFlowPayload(body, data, currentFlowId = "") {
     return { error: "扣除手续费后的现金金额必须大于 0。" };
   }
 
-  const flows = data.funding.flows;
+  const account = getFundingAccount(data, accountId);
+  const flows = account.flows;
 
   if (side === "sell" && value.matchedTradeId) {
     const buy = flows.find((flow) => flow.id === value.matchedTradeId);
@@ -309,14 +322,15 @@ function validateFundingFlowPayload(body, data, currentFlowId = "") {
   return { value };
 }
 
-function canDeleteFundingFlow(data, flowId) {
-  const flow = data.funding.flows.find((candidate) => candidate.id === flowId);
+function canDeleteFundingFlow(data, flowId, accountId = "") {
+  const account = getFundingAccount(data, accountId);
+  const flow = account.flows.find((candidate) => candidate.id === flowId);
 
   if (!flow || !isTradeFlow(flow) || flow.side !== "buy") {
     return { ok: true };
   }
 
-  const hasMatchedSell = data.funding.flows.some(
+  const hasMatchedSell = account.flows.some(
     (candidate) => isTradeFlow(candidate) && candidate.side === "sell" && candidate.matchedTradeId === flowId
   );
 
@@ -336,10 +350,32 @@ function buildYearPayload(data, year) {
 }
 
 function buildFundingPayload(data) {
+  return buildFundingAccountPayload(data);
+}
+
+function buildFundingAccountPayload(data, accountId = "") {
+  const account = getFundingAccount(data, accountId);
   return {
-    funding: data.funding,
-    fundingSummary: calculateFundingSummary(data.funding),
+    fundingAccounts: getFundingAccounts(data).map((candidate) => ({
+      id: candidate.id,
+      name: candidate.name,
+    })),
+    activeAccountId: account.id,
+    fundingAccount: {
+      id: account.id,
+      name: account.name,
+      startingBalance: account.startingBalance,
+    },
+    fundingSummary: calculateFundingSummary(account),
   };
+}
+
+function validateFundingAccountSelection(data, accountId) {
+  const account = getFundingAccount(data, accountId);
+  if (accountId && account.id !== accountId) {
+    return null;
+  }
+  return account;
 }
 
 async function serveStatic(request, response, pathname) {
@@ -394,7 +430,49 @@ async function handleApi(request, response, pathname) {
 
   if (pathname === "/api/funding" && request.method === "GET") {
     const data = await readData();
-    sendJson(response, 200, buildFundingPayload(data));
+    sendJson(response, 200, buildFundingAccountPayload(data, url.searchParams.get("accountId") || ""));
+    return;
+  }
+
+  if (pathname === "/api/funding/accounts" && request.method === "POST") {
+    const body = await readRequestBody(request);
+    const name = validateAccountName(body.name);
+
+    if (!name) {
+      sendJson(response, 400, { error: "账户名称不能为空。" });
+      return;
+    }
+
+    const data = await readData();
+    const account = addFundingAccount(data, {
+      id: randomUUID(),
+      name,
+    });
+    await writeData(data);
+    sendJson(response, 201, buildFundingAccountPayload(data, account.id));
+    return;
+  }
+
+  if (pathname.startsWith("/api/funding/accounts/") && request.method === "PUT") {
+    const accountId = pathname.split("/").pop();
+    const body = await readRequestBody(request);
+    const name = validateAccountName(body.name);
+
+    if (!name) {
+      sendJson(response, 400, { error: "账户名称不能为空。" });
+      return;
+    }
+
+    const data = await readData();
+    const updated = renameFundingAccount(data, accountId, name);
+
+    if (!updated) {
+      sendJson(response, 404, { error: "找不到要重命名的账户。" });
+      return;
+    }
+
+    await writeData(data);
+    sendJson(response, 200, buildFundingAccountPayload(data, accountId));
     return;
   }
 
@@ -408,16 +486,26 @@ async function handleApi(request, response, pathname) {
     }
 
     const data = await readData();
-    setFundingStartingBalance(data, amount);
+    const accountId = typeof body.accountId === "string" ? body.accountId : "";
+    if (!validateFundingAccountSelection(data, accountId)) {
+      sendJson(response, 404, { error: "找不到指定账户。" });
+      return;
+    }
+    setFundingStartingBalance(data, amount, accountId);
     await writeData(data);
-    sendJson(response, 200, buildFundingPayload(data));
+    sendJson(response, 200, buildFundingAccountPayload(data, accountId));
     return;
   }
 
   if (pathname === "/api/funding/flows" && request.method === "POST") {
     const body = await readRequestBody(request);
     const data = await readData();
-    const validation = validateFundingFlowPayload(body, data);
+    const accountId = typeof body.accountId === "string" ? body.accountId : "";
+    if (!validateFundingAccountSelection(data, accountId)) {
+      sendJson(response, 404, { error: "找不到指定账户。" });
+      return;
+    }
+    const validation = validateFundingFlowPayload(body, data, "", accountId);
 
     if (validation.error) {
       sendJson(response, 400, { error: validation.error });
@@ -427,9 +515,9 @@ async function handleApi(request, response, pathname) {
     addFundingFlow(data, {
       id: randomUUID(),
       ...validation.value,
-    });
+    }, accountId);
     await writeData(data);
-    sendJson(response, 201, buildFundingPayload(data));
+    sendJson(response, 201, buildFundingAccountPayload(data, accountId));
     return;
   }
 
@@ -437,14 +525,19 @@ async function handleApi(request, response, pathname) {
     const flowId = pathname.split("/").pop();
     const body = await readRequestBody(request);
     const data = await readData();
-    const validation = validateFundingFlowPayload(body, data, flowId);
+    const accountId = typeof body.accountId === "string" ? body.accountId : "";
+    if (!validateFundingAccountSelection(data, accountId)) {
+      sendJson(response, 404, { error: "找不到指定账户。" });
+      return;
+    }
+    const validation = validateFundingFlowPayload(body, data, flowId, accountId);
 
     if (validation.error) {
       sendJson(response, 400, { error: validation.error });
       return;
     }
 
-    const updated = updateFundingFlow(data, flowId, validation.value);
+    const updated = updateFundingFlow(data, flowId, validation.value, accountId);
 
     if (!updated) {
       sendJson(response, 404, { error: "找不到要更新的资金记录。" });
@@ -452,21 +545,26 @@ async function handleApi(request, response, pathname) {
     }
 
     await writeData(data);
-    sendJson(response, 200, buildFundingPayload(data));
+    sendJson(response, 200, buildFundingAccountPayload(data, accountId));
     return;
   }
 
   if (pathname.startsWith("/api/funding/flows/") && request.method === "DELETE") {
     const flowId = pathname.split("/").pop();
     const data = await readData();
-    const deletionValidation = canDeleteFundingFlow(data, flowId);
+    const accountId = url.searchParams.get("accountId") || "";
+    if (!validateFundingAccountSelection(data, accountId)) {
+      sendJson(response, 404, { error: "找不到指定账户。" });
+      return;
+    }
+    const deletionValidation = canDeleteFundingFlow(data, flowId, accountId);
 
     if (!deletionValidation.ok) {
       sendJson(response, 400, { error: deletionValidation.error });
       return;
     }
 
-    const deleted = deleteFundingFlow(data, flowId);
+    const deleted = deleteFundingFlow(data, flowId, accountId);
 
     if (!deleted) {
       sendJson(response, 404, { error: "找不到要删除的资金记录。" });
@@ -474,7 +572,7 @@ async function handleApi(request, response, pathname) {
     }
 
     await writeData(data);
-    sendJson(response, 200, buildFundingPayload(data));
+    sendJson(response, 200, buildFundingAccountPayload(data, accountId));
     return;
   }
 

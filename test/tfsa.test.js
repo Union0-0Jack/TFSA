@@ -3,6 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
+  addFundingAccount,
   addFundingFlow,
   addTransaction,
   calculateFundingSummary,
@@ -12,6 +13,7 @@ const {
   deleteFundingFlow,
   deleteTransaction,
   ensureDataShape,
+  getFundingAccount,
   getOrCreateYear,
   setFundingStartingBalance,
   setStartingContributionRoom,
@@ -181,6 +183,73 @@ test("old data without funding is normalized", () => {
   assert.equal(summary.flows.length, 0);
 });
 
+test("legacy funding data migrates into the default account", () => {
+  const data = ensureDataShape({
+    funding: {
+      startingBalance: 1000,
+      flows: [
+        {
+          id: "legacy",
+          date: "2026-04-01",
+          type: "outflow",
+          amount: 100,
+          note: "old format",
+        },
+      ],
+    },
+    years: {},
+  });
+  const account = getFundingAccount(data, "account-1");
+  const summary = calculateFundingSummary(data.funding);
+
+  assert.equal(data.funding.activeAccountId, "account-1");
+  assert.equal(account.name, "账户 1");
+  assert.equal(summary.startingBalance, 1000);
+  assert.equal(summary.currentBalance, 900);
+  assert.equal(summary.flows.length, 1);
+});
+
+test("funding accounts keep balances and flows isolated", () => {
+  const data = createEmptyData();
+  addFundingAccount(data, {
+    id: "account-2",
+    name: "账户 2",
+  });
+
+  setFundingStartingBalance(data, 1000, "account-1");
+  setFundingStartingBalance(data, 2000, "account-2");
+  addFundingFlow(
+    data,
+    {
+      id: "a",
+      date: "2026-01-01",
+      type: "outflow",
+      amount: 100,
+      note: "",
+    },
+    "account-1"
+  );
+  addFundingFlow(
+    data,
+    {
+      id: "b",
+      date: "2026-01-01",
+      type: "inflow",
+      amount: 300,
+      note: "",
+    },
+    "account-2"
+  );
+
+  const firstSummary = calculateFundingSummary(getFundingAccount(data, "account-1"));
+  const secondSummary = calculateFundingSummary(getFundingAccount(data, "account-2"));
+
+  assert.equal(firstSummary.currentBalance, 900);
+  assert.equal(firstSummary.flows.length, 1);
+  assert.equal(secondSummary.currentBalance, 2300);
+  assert.equal(secondSummary.flows.length, 1);
+});
+
 test("funding and yearly contribution data are independent", () => {
   const data = createEmptyData();
   setStartingContributionRoom(data, 2026, 7000);
@@ -246,6 +315,61 @@ test("stock trades compute cash flow and realized profit with fees", () => {
   assert.equal(sell.allocatedCost, 100.33);
   assert.equal(sell.realizedProfit, 18.67);
   assert.equal(summary.realizedProfit, 18.67);
+});
+
+test("matched trades do not cross funding accounts", () => {
+  const data = createEmptyData();
+  addFundingAccount(data, {
+    id: "account-2",
+    name: "账户 2",
+  });
+  addFundingFlow(
+    data,
+    {
+      id: "buy",
+      date: "2026-04-01",
+      assetType: "stock",
+      side: "buy",
+      ticker: "DXYZ",
+      quantity: 10,
+      price: 10,
+      fee: 0,
+      type: "outflow",
+      amount: 100,
+      cashAmount: 100,
+      note: "",
+      matchedTradeId: "",
+    },
+    "account-1"
+  );
+  addFundingFlow(
+    data,
+    {
+      id: "sell",
+      date: "2026-04-02",
+      assetType: "stock",
+      side: "sell",
+      ticker: "DXYZ",
+      quantity: 10,
+      price: 12,
+      fee: 0,
+      type: "inflow",
+      amount: 120,
+      cashAmount: 120,
+      note: "",
+      matchedTradeId: "buy",
+    },
+    "account-2"
+  );
+
+  const firstSummary = calculateFundingSummary(getFundingAccount(data, "account-1"));
+  const secondSummary = calculateFundingSummary(getFundingAccount(data, "account-2"));
+  const firstBuy = firstSummary.flows.find((flow) => flow.id === "buy");
+  const secondSell = secondSummary.flows.find((flow) => flow.id === "sell");
+
+  assert.equal(firstBuy.openQuantity, 10);
+  assert.equal(secondSell.realizedProfit, undefined);
+  assert.equal(secondSummary.realizedProfit, 0);
 });
 
 test("option trades use a 100 multiplier for cash flow", () => {

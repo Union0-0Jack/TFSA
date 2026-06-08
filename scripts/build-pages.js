@@ -6,6 +6,8 @@ const {
   calculateFundingSummary,
   calculateYearSummary,
   ensureDataShape,
+  getFundingAccount,
+  getFundingAccounts,
   getOrCreateYear,
 } = require("../lib/tfsa");
 
@@ -26,6 +28,23 @@ function buildYearPayload(data, year) {
   };
 }
 
+function buildFundingPayload(data, accountId) {
+  const account = getFundingAccount(data, accountId);
+  return {
+    fundingAccounts: getFundingAccounts(data).map((candidate) => ({
+      id: candidate.id,
+      name: candidate.name,
+    })),
+    activeAccountId: account.id,
+    fundingAccount: {
+      id: account.id,
+      name: account.name,
+      startingBalance: account.startingBalance,
+    },
+    fundingSummary: calculateFundingSummary(account),
+  };
+}
+
 async function main() {
   const data = ensureDataShape(await readJson(dataFile));
   const availableYears = Object.keys(data.years)
@@ -40,6 +59,13 @@ async function main() {
 
   for (const year of years) {
     yearPayloads[String(year)] = buildYearPayload(data, year);
+  }
+  const fundingAccounts = getFundingAccounts(data);
+  const defaultFundingAccountId = data.funding.activeAccountId || fundingAccounts[0]?.id || "";
+  const fundingPayloads = {};
+
+  for (const account of fundingAccounts) {
+    fundingPayloads[account.id] = buildFundingPayload(data, account.id);
   }
 
   await fs.rm(docsDir, { recursive: true, force: true });
@@ -66,10 +92,9 @@ async function main() {
         defaultYear,
         availableYears,
         yearPayloads,
-        fundingPayload: {
-          funding: data.funding,
-          fundingSummary: calculateFundingSummary(data.funding),
-        },
+        defaultFundingAccountId,
+        fundingPayloads,
+        fundingPayload: fundingPayloads[defaultFundingAccountId],
       },
       null,
       2
