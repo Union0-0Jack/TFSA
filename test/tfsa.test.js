@@ -315,6 +315,7 @@ test("stock trades compute cash flow and realized profit with fees", () => {
   assert.equal(sell.allocatedCost, 100.33);
   assert.equal(sell.realizedProfit, 18.67);
   assert.equal(summary.realizedProfit, 18.67);
+  assert.equal(summary.winRate, 100);
 });
 
 test("matched trades do not cross funding accounts", () => {
@@ -370,6 +371,218 @@ test("matched trades do not cross funding accounts", () => {
   assert.equal(firstBuy.openQuantity, 10);
   assert.equal(secondSell.realizedProfit, undefined);
   assert.equal(secondSummary.realizedProfit, 0);
+});
+
+test("bull call spread strategy legs preserve grouping and net debit", () => {
+  const data = ensureDataShape({
+    funding: {
+      startingBalance: 1000,
+      flows: [
+        {
+          id: "long",
+          date: "2026-06-01",
+          assetType: "option",
+          side: "buy",
+          ticker: "QCOM",
+          expiryDate: "2026-07-17",
+          optionType: "call",
+          strike: 100,
+          quantity: 1,
+          price: 3,
+          fee: 0.5,
+          note: "",
+          matchedTradeId: "",
+          strategyId: "spread-1",
+          strategyType: "bull_call_spread",
+          strategyLeg: "long_call",
+        },
+        {
+          id: "short",
+          date: "2026-06-01",
+          assetType: "option",
+          side: "sell",
+          ticker: "QCOM",
+          expiryDate: "2026-07-17",
+          optionType: "call",
+          strike: 105,
+          quantity: 1,
+          price: 1.2,
+          fee: 0.5,
+          note: "",
+          matchedTradeId: "",
+          strategyId: "spread-1",
+          strategyType: "bull_call_spread",
+          strategyLeg: "short_call",
+        },
+      ],
+    },
+    years: {},
+  });
+
+  const summary = calculateFundingSummary(data.funding);
+  const long = summary.flows.find((flow) => flow.id === "long");
+  const short = summary.flows.find((flow) => flow.id === "short");
+
+  assert.equal(long.strategyId, "spread-1");
+  assert.equal(short.strategyLeg, "short_call");
+  assert.equal(summary.outflows, 300.5);
+  assert.equal(summary.inflows, 119.5);
+  assert.equal(summary.currentBalance, 819);
+  assert.equal(summary.realizedProfit, 0);
+  assert.equal(summary.realizedReturnRate, 0);
+});
+
+test("short option openings can be matched by buy-to-close trades", () => {
+  const data = createEmptyData();
+  setFundingStartingBalance(data, 1000);
+  addFundingFlow(data, {
+    id: "short-open",
+    date: "2026-06-01",
+    assetType: "option",
+    side: "sell",
+    ticker: "QCOM",
+    expiryDate: "2026-07-17",
+    optionType: "call",
+    strike: 105,
+    quantity: 1,
+    price: 1.2,
+    fee: 0,
+    type: "inflow",
+    amount: 120,
+    cashAmount: 120,
+    note: "",
+    matchedTradeId: "",
+    strategyId: "spread-1",
+    strategyType: "bull_call_spread",
+    strategyLeg: "short_call",
+  });
+  addFundingFlow(data, {
+    id: "buy-close",
+    date: "2026-06-10",
+    assetType: "option",
+    side: "buy",
+    ticker: "QCOM",
+    expiryDate: "2026-07-17",
+    optionType: "call",
+    strike: 105,
+    quantity: 1,
+    price: 0.5,
+    fee: 0,
+    type: "outflow",
+    amount: 50,
+    cashAmount: 50,
+    note: "",
+    matchedTradeId: "short-open",
+  });
+
+  const summary = calculateFundingSummary(data.funding);
+  const shortOpen = summary.flows.find((flow) => flow.id === "short-open");
+  const buyClose = summary.flows.find((flow) => flow.id === "buy-close");
+
+  assert.equal(shortOpen.openQuantity, 0);
+  assert.equal(buyClose.realizedProfit, 70);
+  assert.equal(summary.realizedProfit, 70);
+  assert.equal(summary.realizedReturnRate, 7);
+  assert.equal(summary.winRate, 100);
+});
+
+test("bull call spread can expire worthless as a matched strategy close", () => {
+  const data = createEmptyData();
+  setFundingStartingBalance(data, 1000);
+  addFundingFlow(data, {
+    id: "long-open",
+    date: "2026-06-01",
+    assetType: "option",
+    side: "buy",
+    ticker: "QCOM",
+    expiryDate: "2026-07-17",
+    optionType: "call",
+    strike: 100,
+    quantity: 1,
+    price: 3,
+    fee: 0,
+    type: "outflow",
+    amount: 300,
+    cashAmount: 300,
+    note: "",
+    matchedTradeId: "",
+    strategyId: "spread-1",
+    strategyType: "bull_call_spread",
+    strategyLeg: "long_call",
+  });
+  addFundingFlow(data, {
+    id: "short-open",
+    date: "2026-06-01",
+    assetType: "option",
+    side: "sell",
+    ticker: "QCOM",
+    expiryDate: "2026-07-17",
+    optionType: "call",
+    strike: 105,
+    quantity: 1,
+    price: 1.2,
+    fee: 0,
+    type: "inflow",
+    amount: 120,
+    cashAmount: 120,
+    note: "",
+    matchedTradeId: "",
+    strategyId: "spread-1",
+    strategyType: "bull_call_spread",
+    strategyLeg: "short_call",
+  });
+  addFundingFlow(data, {
+    id: "long-expiry",
+    date: "2026-07-17",
+    assetType: "option",
+    side: "sell",
+    ticker: "QCOM",
+    expiryDate: "2026-07-17",
+    optionType: "call",
+    strike: 100,
+    quantity: 1,
+    price: 0,
+    fee: 0,
+    closeReason: "expired_worthless",
+    type: "inflow",
+    amount: 0,
+    cashAmount: 0,
+    note: "",
+    matchedTradeId: "long-open",
+    strategyId: "spread-1",
+    strategyType: "bull_call_spread",
+    strategyLeg: "long_call",
+  });
+  addFundingFlow(data, {
+    id: "short-expiry",
+    date: "2026-07-17",
+    assetType: "option",
+    side: "buy",
+    ticker: "QCOM",
+    expiryDate: "2026-07-17",
+    optionType: "call",
+    strike: 105,
+    quantity: 1,
+    price: 0,
+    fee: 0,
+    type: "outflow",
+    amount: 0,
+    cashAmount: 0,
+    note: "",
+    matchedTradeId: "short-open",
+    strategyId: "spread-1",
+    strategyType: "bull_call_spread",
+    strategyLeg: "short_call",
+  });
+
+  const summary = calculateFundingSummary(data.funding);
+  const longExpiry = summary.flows.find((flow) => flow.id === "long-expiry");
+  const shortExpiry = summary.flows.find((flow) => flow.id === "short-expiry");
+
+  assert.equal(longExpiry.realizedProfit, -300);
+  assert.equal(shortExpiry.realizedProfit, 120);
+  assert.equal(summary.realizedProfit, -180);
+  assert.equal(summary.winRate, 50);
 });
 
 test("option trades use a 100 multiplier for cash flow", () => {

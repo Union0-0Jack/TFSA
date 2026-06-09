@@ -26,10 +26,25 @@ const elements = {
   fundingAccountSelect: document.querySelector("#funding-account-select"),
   fundingAddAccountButton: document.querySelector("#funding-add-account-button"),
   fundingBalanceForm: document.querySelector("#funding-balance-form"),
+  fundingBullCallExpiryDate: document.querySelector("#funding-bull-call-expiry-date"),
+  fundingBullCallFee: document.querySelector("#funding-bull-call-fee"),
+  fundingBullCallFields: document.querySelector("#funding-bull-call-fields"),
+  fundingBullCallCloseReason: document.querySelector("#funding-bull-call-close-reason"),
+  fundingBullCallLongPrice: document.querySelector("#funding-bull-call-long-price"),
+  fundingBullCallLongStrike: document.querySelector("#funding-bull-call-long-strike"),
+  fundingBullCallMatchEnabled: document.querySelector("#funding-bull-call-match-enabled"),
+  fundingBullCallMatchFields: document.querySelector("#funding-bull-call-match-fields"),
+  fundingBullCallMatchHelp: document.querySelector("#funding-bull-call-match-help"),
+  fundingBullCallMatchStrategy: document.querySelector("#funding-bull-call-match-strategy"),
+  fundingBullCallQuantity: document.querySelector("#funding-bull-call-quantity"),
+  fundingBullCallShortPrice: document.querySelector("#funding-bull-call-short-price"),
+  fundingBullCallShortStrike: document.querySelector("#funding-bull-call-short-strike"),
+  fundingBullCallTicker: document.querySelector("#funding-bull-call-ticker"),
   fundingCancelEditButton: document.querySelector("#funding-cancel-edit-button"),
   fundingCloseFields: document.querySelector("#funding-close-fields"),
   fundingCloseReason: document.querySelector("#funding-close-reason"),
   fundingEditingId: document.querySelector("#funding-editing-id"),
+  fundingEntryMode: document.querySelector("#funding-entry-mode"),
   fundingAssetType: document.querySelector("#funding-asset-type"),
   fundingExpiryDate: document.querySelector("#funding-expiry-date"),
   fundingFee: document.querySelector("#funding-fee"),
@@ -117,6 +132,10 @@ function formatNumber(value) {
   }).format(value || 0);
 }
 
+function percent(value) {
+  return `${formatNumber(value)}%`;
+}
+
 function isTradeFlow(flow) {
   return flow?.assetType === "stock" || flow?.assetType === "option";
 }
@@ -168,6 +187,63 @@ function getDraftTrade() {
     optionType: elements.fundingOptionType.value,
     strike: Number(elements.fundingStrike.value),
   };
+}
+
+function getDraftBullCallSpread() {
+  return {
+    ticker: elements.fundingBullCallTicker.value.trim().toUpperCase(),
+    expiryDate: elements.fundingBullCallExpiryDate.value,
+    quantity: Number(elements.fundingBullCallQuantity.value),
+    longStrike: Number(elements.fundingBullCallLongStrike.value),
+    longPrice: Number(elements.fundingBullCallLongPrice.value),
+    shortStrike: Number(elements.fundingBullCallShortStrike.value),
+    shortPrice: Number(elements.fundingBullCallShortPrice.value),
+    fee: Number(elements.fundingBullCallFee.value || 0),
+    closeReason: elements.fundingBullCallCloseReason.value,
+  };
+}
+
+function getBullCallSpreadMetrics(spread) {
+  const netDebit = Number(
+    ((spread.longPrice - spread.shortPrice) * spread.quantity * 100 + spread.fee).toFixed(2)
+  );
+  const widthValue = (spread.shortStrike - spread.longStrike) * spread.quantity * 100;
+  const maxProfit = Number((widthValue - netDebit).toFixed(2));
+  const maxLoss = netDebit;
+  const breakeven = Number((spread.longStrike + netDebit / (spread.quantity * 100)).toFixed(4));
+
+  return {
+    netDebit,
+    maxProfit,
+    maxLoss,
+    breakeven,
+  };
+}
+
+function isBullCallSpreadFlow(flow) {
+  return flow?.strategyType === "bull_call_spread" && flow?.strategyId;
+}
+
+function getBullCallSpreadMatches() {
+  if (!state.fundingSummary) {
+    return [];
+  }
+
+  return getBullCallSpreadEntries(state.fundingSummary.flows)
+    .map((entry) => ({
+      entry,
+      metrics: getBullCallSpreadEntryMetrics(entry),
+    }))
+    .filter(({ metrics }) => metrics && metrics.longCall.openQuantity > 0 && metrics.shortCall.openQuantity > 0)
+    .sort((left, right) => getEntrySortDate(left.entry).localeCompare(getEntrySortDate(right.entry)));
+}
+
+function getSelectedBullCallSpreadMatch() {
+  const strategyId = elements.fundingBullCallMatchStrategy.value;
+  if (!strategyId) {
+    return null;
+  }
+  return getBullCallSpreadMatches().find(({ entry }) => entry.strategyId === strategyId) || null;
 }
 
 function getInstrumentLabel(flow) {
@@ -387,10 +463,10 @@ function renderFundingSummary(summary) {
 
   const stats = [
     { label: `${accountName} 初始余额`, value: currency(summary.startingBalance) },
-    { label: "累计流入", value: currency(summary.inflows) },
-    { label: "累计流出", value: currency(summary.outflows) },
     { label: "当前账户余额", value: currency(summary.currentBalance) },
     { label: "已实现盈亏", value: currency(summary.realizedProfit) },
+    { label: "已实现收益率", value: percent(summary.realizedReturnRate) },
+    { label: "胜率", value: percent(summary.winRate) },
   ];
 
   elements.fundingSummaryGrid.innerHTML = "";
@@ -421,7 +497,7 @@ function getFundingHistoryDetail(flow) {
     parts.push(`手续费 ${currency(flow.fee)}`);
   }
 
-  if (flow.side === "buy") {
+  if (!flow.matchedTradeId && Number.isFinite(flow.openQuantity)) {
     parts.push(`已匹配 ${formatNumber(flow.matchedQuantity)}，剩余 ${formatNumber(flow.openQuantity)}`);
   } else if (flow.matchedTradeId) {
     if (isWorthlessOptionExpiration(flow)) {
@@ -457,7 +533,13 @@ function getSignedFundingAmount(flow) {
 }
 
 function getEntryFlows(entry) {
-  return entry.kind === "group" ? [entry.buy, ...entry.sells] : [entry.flow];
+  if (entry.kind === "group") {
+    return [entry.buy, ...entry.sells];
+  }
+  if (entry.kind === "strategy") {
+    return entry.flows;
+  }
+  return [entry.flow];
 }
 
 function getEntryTradeDate(entry) {
@@ -494,6 +576,11 @@ function getEntryMonthLabel(entry) {
 }
 
 function getEntryStatus(entry) {
+  if (entry.kind === "strategy") {
+    const openingLegs = entry.flows.filter((flow) => isBullCallSpreadFlow(flow));
+    return openingLegs.every((flow) => Number(flow.openQuantity) <= 0.000001) ? "closed" : "open";
+  }
+
   if (entry.kind === "group") {
     return entry.buy.openQuantity > 0.000001 ? "open" : "closed";
   }
@@ -503,11 +590,11 @@ function getEntryStatus(entry) {
     return "cash";
   }
 
-  if (flow.side === "buy") {
-    return flow.openQuantity > 0.000001 ? "open" : "closed";
+  if (flow.matchedTradeId) {
+    return "closed";
   }
 
-  return "closed";
+  return flow.openQuantity > 0.000001 ? "open" : "closed";
 }
 
 function getEntryStatusLabel(status) {
@@ -553,44 +640,92 @@ function getEntrySearchText(entry) {
 
 function getMatchedFundingGroups(flows) {
   const byId = new Map(flows.map((flow) => [flow.id, flow]));
-  const sellsByBuyId = new Map();
-  const groupedSellIds = new Set();
+  const closersByOpenerId = new Map();
+  const groupedCloserIds = new Set();
 
   for (const flow of flows) {
-    if (!isTradeFlow(flow) || flow.side !== "sell" || !flow.matchedTradeId) {
+    if (!isTradeFlow(flow) || !flow.matchedTradeId) {
       continue;
     }
 
-    const buy = byId.get(flow.matchedTradeId);
-    if (!buy || !isTradeFlow(buy) || buy.side !== "buy" || !sameInstrument(buy, flow)) {
+    const opener = byId.get(flow.matchedTradeId);
+    if (!opener || !isTradeFlow(opener) || opener.side === flow.side || !sameInstrument(opener, flow)) {
       continue;
     }
 
-    if (!sellsByBuyId.has(buy.id)) {
-      sellsByBuyId.set(buy.id, []);
+    if (!closersByOpenerId.has(opener.id)) {
+      closersByOpenerId.set(opener.id, []);
     }
-    sellsByBuyId.get(buy.id).push(flow);
-    groupedSellIds.add(flow.id);
+    closersByOpenerId.get(opener.id).push(flow);
+    groupedCloserIds.add(flow.id);
   }
 
-  return { sellsByBuyId, groupedSellIds };
+  return { closersByOpenerId, groupedCloserIds };
+}
+
+function getBullCallSpreadEntries(flows) {
+  const byStrategyId = new Map();
+  const strategyLegIds = new Map();
+
+  for (const flow of flows) {
+    if (!isBullCallSpreadFlow(flow) || flow.matchedTradeId) {
+      continue;
+    }
+
+    if (!byStrategyId.has(flow.strategyId)) {
+      byStrategyId.set(flow.strategyId, []);
+      strategyLegIds.set(flow.strategyId, new Set());
+    }
+    byStrategyId.get(flow.strategyId).push(flow);
+    strategyLegIds.get(flow.strategyId).add(flow.id);
+  }
+
+  for (const flow of flows) {
+    if (!isTradeFlow(flow) || !flow.matchedTradeId) {
+      continue;
+    }
+
+    for (const [strategyId, legIds] of strategyLegIds.entries()) {
+      if (legIds.has(flow.matchedTradeId)) {
+        byStrategyId.get(strategyId).push(flow);
+      }
+    }
+  }
+
+  return [...byStrategyId.entries()].map(([strategyId, strategyFlows]) => ({
+    kind: "strategy",
+    strategyId,
+    strategyType: "bull_call_spread",
+    flows: strategyFlows.sort((left, right) => {
+      if (left.strategyLeg !== right.strategyLeg) {
+        return left.strategyLeg === "long_call" ? -1 : 1;
+      }
+      return Number(left.strike) - Number(right.strike);
+    }),
+  }));
 }
 
 function getFundingHistoryEntries(flows) {
-  const { sellsByBuyId, groupedSellIds } = getMatchedFundingGroups(flows);
-  const entries = [];
+  const strategyEntries = getBullCallSpreadEntries(flows);
+  const strategyFlowIds = new Set(strategyEntries.flatMap((entry) => entry.flows.map((flow) => flow.id)));
+  const { closersByOpenerId, groupedCloserIds } = getMatchedFundingGroups(flows);
+  const entries = [...strategyEntries];
 
   for (const flow of flows) {
-    if (groupedSellIds.has(flow.id)) {
+    if (strategyFlowIds.has(flow.id)) {
       continue;
     }
 
-    const sells = sellsByBuyId.get(flow.id) || [];
-    if (isTradeFlow(flow) && flow.side === "buy" && sells.length > 0) {
+    if (groupedCloserIds.has(flow.id)) {
+      continue;
+    }
+
+    const closers = closersByOpenerId.get(flow.id) || [];
+    if (isTradeFlow(flow) && closers.length > 0) {
       entries.push({
         kind: "group",
         buy: flow,
-        sells: [...sells].sort((left, right) => left.date.localeCompare(right.date)),
+        sells: [...closers].sort((left, right) => left.date.localeCompare(right.date)),
       });
     } else {
       entries.push({ kind: "flow", flow });
@@ -641,7 +776,7 @@ function compareFundingEntries(left, right) {
 
 function attachFundingFlowActions(item, flow) {
   const editButton = item.querySelector('[data-action="edit"]');
-  editButton.hidden = !isTradeFlow(flow);
+  editButton.hidden = !isTradeFlow(flow) || isBullCallSpreadFlow(flow);
   editButton.addEventListener("click", () => {
     startFundingEdit(flow);
   });
@@ -680,12 +815,18 @@ function renderFundingFlowItem(flow, options = {}) {
   item.classList.toggle("profit", Number(flow.realizedProfit) > 0);
   item.classList.toggle("loss", Number(flow.realizedProfit) < 0);
   item.classList.toggle("history-child", options.child === true);
-  attachFundingFlowActions(item, flow);
+  if (options.actions === false) {
+    item.querySelector(".history-actions").hidden = true;
+  } else {
+    attachFundingFlowActions(item, flow);
+  }
   return fragment;
 }
 
 function renderFundingGroupItem(entry) {
   const { buy, sells } = entry;
+  const openerText = buy.side === "buy" ? "买入开仓" : "卖出开仓";
+  const closerText = buy.side === "buy" ? "卖出平仓" : "买入平仓";
   const status = getEntryStatus(entry);
   const details = document.createElement("details");
   details.className = "history-item history-group";
@@ -728,11 +869,11 @@ function renderFundingGroupItem(entry) {
   const note = document.createElement("p");
   note.className = "history-note";
   const expiryText = buy.assetType === "option" ? ` · 到期 ${formatDate(buy.expiryDate)}` : "";
-  note.textContent = `${getInstrumentLabel(buy)}${expiryText} · 买入 ${formatNumber(buy.quantity)}，已匹配 ${formatNumber(buy.matchedQuantity)}，剩余 ${formatNumber(buy.openQuantity)}`;
+  note.textContent = `${getInstrumentLabel(buy)}${expiryText} · ${openerText} ${formatNumber(buy.quantity)}，已匹配 ${formatNumber(buy.matchedQuantity)}，剩余 ${formatNumber(buy.openQuantity)}`;
 
   const detail = document.createElement("p");
   detail.className = "history-detail";
-  detail.textContent = `匹配 ${sells.length} 条 · 盈亏 ${currency(profit)}`;
+  detail.textContent = `${closerText} ${sells.length} 条 · 盈亏 ${currency(profit)}`;
 
   main.append(meta, amount, note, detail);
 
@@ -754,6 +895,117 @@ function renderFundingGroupItem(entry) {
   details.classList.toggle("profit", profit > 0);
   details.classList.toggle("loss", profit < 0);
   details.classList.toggle("outflow", netCash < 0);
+  return details;
+}
+
+function getBullCallSpreadEntryMetrics(entry) {
+  const longCall = entry.flows.find((flow) => flow.strategyLeg === "long_call" && !flow.matchedTradeId);
+  const shortCall = entry.flows.find((flow) => flow.strategyLeg === "short_call" && !flow.matchedTradeId);
+
+  if (!longCall || !shortCall) {
+    return null;
+  }
+
+  const netDebit = Number((longCall.amount - shortCall.amount).toFixed(2));
+  const quantity = Math.min(longCall.quantity, shortCall.quantity);
+  const widthValue = (shortCall.strike - longCall.strike) * quantity * 100;
+  return {
+    longCall,
+    shortCall,
+    netDebit,
+    maxLoss: netDebit,
+    maxProfit: Number((widthValue - netDebit).toFixed(2)),
+    breakeven: Number((longCall.strike + netDebit / (quantity * 100)).toFixed(4)),
+    quantity,
+  };
+}
+
+function renderBullCallSpreadItem(entry) {
+  const metrics = getBullCallSpreadEntryMetrics(entry);
+  const details = document.createElement("details");
+  details.className = "history-item history-group";
+  details.dataset.id = entry.strategyId;
+
+  const summary = document.createElement("summary");
+  summary.className = "history-group-summary";
+
+  const main = document.createElement("div");
+  main.className = "history-main";
+
+  const meta = document.createElement("div");
+  meta.className = "history-meta";
+
+  const type = document.createElement("span");
+  type.className = "history-type";
+  type.textContent = "Bull Call";
+
+  const badge = document.createElement("span");
+  badge.className = "history-status history-status-open";
+  badge.textContent = "价差策略";
+
+  const date = document.createElement("time");
+  date.className = "history-date";
+  date.textContent = formatDate(getEntryTradeDate(entry));
+
+  meta.append(type, badge, date);
+
+  const amount = document.createElement("strong");
+  amount.className = "history-amount";
+
+  const note = document.createElement("p");
+  note.className = "history-note";
+
+  const detail = document.createElement("p");
+  detail.className = "history-detail";
+
+  if (metrics) {
+    const realizedProfit = entry.flows.reduce(
+      (total, flow) => total + (Number.isFinite(flow.realizedProfit) ? flow.realizedProfit : 0),
+      0
+    );
+    const realizedText = realizedProfit ? ` · 已实现盈亏 ${currency(realizedProfit)}` : "";
+    amount.textContent = `净成本 ${currency(metrics.netDebit)}`;
+    note.textContent = `${metrics.longCall.ticker} ${formatDate(metrics.longCall.expiryDate)} ${formatNumber(metrics.longCall.strike)}/${formatNumber(metrics.shortCall.strike)} Call · ${formatNumber(metrics.quantity)} 份`;
+    detail.textContent = `最大收益 ${currency(metrics.maxProfit)} · 最大亏损 ${currency(metrics.maxLoss)} · 盈亏平衡 ${formatNumber(metrics.breakeven)}${realizedText}`;
+  } else {
+    amount.textContent = "策略记录";
+    note.textContent = "Bull Call 价差";
+    detail.textContent = "策略腿不完整，请检查明细。";
+  }
+
+  main.append(meta, amount, note, detail);
+
+  const actions = document.createElement("div");
+  actions.className = "history-actions";
+  const deleteButton = document.createElement("button");
+  deleteButton.type = "button";
+  deleteButton.className = "ghost-button";
+  deleteButton.textContent = "删除策略";
+  deleteButton.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    deleteFundingStrategy(entry.strategyId);
+  });
+
+  const toggle = document.createElement("span");
+  toggle.className = "history-expand";
+  toggle.textContent = "详情";
+  actions.append(deleteButton, toggle);
+
+  summary.append(main, actions);
+  details.append(summary);
+
+  const children = document.createElement("div");
+  children.className = "history-group-children";
+  for (const flow of entry.flows) {
+    children.append(renderFundingFlowItem(flow, { child: true, actions: false }));
+  }
+  details.append(children);
+
+  if (metrics) {
+    details.classList.toggle("outflow", metrics.netDebit > 0);
+  }
+
   return details;
 }
 
@@ -795,7 +1047,11 @@ function renderFundingHistory(summary) {
     }
 
     elements.fundingHistoryList.append(
-      entry.kind === "group" ? renderFundingGroupItem(entry) : renderFundingFlowItem(entry.flow)
+      entry.kind === "group"
+        ? renderFundingGroupItem(entry)
+        : entry.kind === "strategy"
+          ? renderBullCallSpreadItem(entry)
+          : renderFundingFlowItem(entry.flow)
     );
   }
 }
@@ -850,6 +1106,91 @@ function refreshFundingPreview() {
 
   updateFundingFormVisibility();
 
+  if (elements.fundingEntryMode.value === "bull_call") {
+    const spread = getDraftBullCallSpread();
+    const isClosingSpread = elements.fundingBullCallMatchEnabled.value === "yes";
+    const isWorthlessSpreadExpiration = isClosingSpread && spread.closeReason === "expired_worthless";
+    const hasValidBullCallPrices =
+      Number.isFinite(spread.longPrice) &&
+      Number.isFinite(spread.shortPrice) &&
+      (isWorthlessSpreadExpiration
+        ? spread.longPrice === 0 && spread.shortPrice === 0 && spread.fee === 0
+        : spread.longPrice > 0 && spread.shortPrice > 0);
+
+    if (
+      !summary ||
+      !spread.ticker ||
+      !spread.expiryDate ||
+      !Number.isFinite(spread.quantity) ||
+      !Number.isFinite(spread.longStrike) ||
+      !Number.isFinite(spread.shortStrike) ||
+      !Number.isFinite(spread.fee) ||
+      spread.quantity <= 0 ||
+      spread.longStrike <= 0 ||
+      spread.shortStrike <= 0 ||
+      !hasValidBullCallPrices ||
+      spread.fee < 0
+    ) {
+      elements.fundingPreviewPanel.textContent =
+        isWorthlessSpreadExpiration
+          ? "无价值到期会自动按两条腿成交价 0、手续费 0 计算整组亏损。"
+          : "填写两条 Call 的行权价、成交价和份数后，这里会显示 Bull Call 的净成本、最大收益和盈亏平衡。";
+      return;
+    }
+
+    if (spread.shortStrike <= spread.longStrike) {
+      elements.fundingPreviewPanel.textContent = "Bull Call 需要卖出更高行权价的 Call。";
+      elements.fundingPreviewPanel.classList.add("danger");
+      return;
+    }
+
+    const metrics = getBullCallSpreadMetrics(spread);
+    const selectedSpread = getSelectedBullCallSpreadMatch();
+
+    if (isClosingSpread && !selectedSpread) {
+      elements.fundingPreviewPanel.textContent = "请选择要匹配平仓的 Bull Call 价差。";
+      elements.fundingPreviewPanel.classList.add("warn");
+      return;
+    }
+
+    if (isClosingSpread) {
+      const closeCredit = Number(
+        ((spread.longPrice - spread.shortPrice) * spread.quantity * 100 - spread.fee).toFixed(2)
+      );
+      const { metrics: openingMetrics } = selectedSpread;
+      const openingDebit = Number(
+        ((openingMetrics.netDebit * spread.quantity) / openingMetrics.quantity).toFixed(2)
+      );
+      const realizedProfit = Number((closeCredit - openingDebit).toFixed(2));
+      const currentBalance = summary.currentBalance + closeCredit;
+
+      elements.fundingPreviewPanel.textContent = isWorthlessSpreadExpiration
+        ? `无价值到期，平仓净额 ${currency(closeCredit)}，预计本组亏损 ${currency(Math.abs(realizedProfit))}，账户余额不变。`
+        : `平仓净额 ${currency(closeCredit)}，预计本组盈亏 ${currency(realizedProfit)}，保存后预计账户余额 ${currency(currentBalance)}。`;
+
+      if (currentBalance < 0) {
+        elements.fundingPreviewPanel.classList.add("danger");
+      }
+      return;
+    }
+
+    const currentBalance = summary.currentBalance - metrics.netDebit;
+
+    if (metrics.netDebit <= 0 || metrics.maxProfit <= 0) {
+      elements.fundingPreviewPanel.textContent =
+        "这个价差的风险收益不合理，请检查行权价、成交价或手续费。";
+      elements.fundingPreviewPanel.classList.add("danger");
+      return;
+    }
+
+    elements.fundingPreviewPanel.textContent = `净成本 ${currency(metrics.netDebit)}，最大收益 ${currency(metrics.maxProfit)}，最大亏损 ${currency(metrics.maxLoss)}，盈亏平衡 ${formatNumber(metrics.breakeven)}，保存后预计账户余额 ${currency(currentBalance)}。`;
+
+    if (currentBalance < 0) {
+      elements.fundingPreviewPanel.classList.add("danger");
+    }
+    return;
+  }
+
   const draft = getDraftTrade();
   const isWorthlessExpiration = isWorthlessOptionExpiration(draft);
   const hasValidPrice =
@@ -894,8 +1235,8 @@ function refreshFundingPreview() {
   const currentBalance = summary.startingBalance + simulatedInflows - simulatedOutflows;
   const cashText = `${draft.side === "buy" ? "流出" : "流入"} ${currency(amount)}`;
 
-  if (draft.side === "sell") {
-    const match = getSelectedMatch();
+  const match = getSelectedMatch();
+  if (elements.fundingMatchEnabled.value === "yes") {
     if (!match) {
       elements.fundingPreviewPanel.textContent = isWorthlessExpiration
         ? "无价值到期需要匹配对应买入记录，才能扣减持仓并计算亏损。"
@@ -944,14 +1285,15 @@ function getCandidateMatches() {
   }
 
   const assetType = elements.fundingAssetType.value;
-  if (elements.fundingSide.value !== "sell" || elements.fundingMatchEnabled.value !== "yes") {
+  const side = elements.fundingSide.value;
+  if (side !== "sell" || elements.fundingMatchEnabled.value !== "yes") {
     return [];
   }
 
   const current = getEditingFundingFlow();
   return state.fundingSummary.flows
     .filter((flow) => {
-      if (!isTradeFlow(flow) || flow.side !== "buy" || flow.assetType !== assetType) {
+      if (!isTradeFlow(flow) || flow.side !== "buy" || flow.assetType !== assetType || flow.matchedTradeId) {
         return false;
       }
 
@@ -960,7 +1302,7 @@ function getCandidateMatches() {
       }
 
       const editingQuantity =
-        current?.side === "sell" && current.matchedTradeId === flow.id ? current.quantity : 0;
+        current?.matchedTradeId === flow.id ? current.quantity : 0;
       return flow.openQuantity + editingQuantity > 0;
     })
     .sort(compareCandidateMatches);
@@ -1030,7 +1372,7 @@ function updateFundingMatchOptions() {
   for (const match of matches) {
     const option = document.createElement("option");
     const editingQuantity =
-      current?.side === "sell" && current.matchedTradeId === match.id ? current.quantity : 0;
+      current?.matchedTradeId === match.id ? current.quantity : 0;
     const availableQuantity = match.openQuantity + editingQuantity;
     option.value = match.id;
     option.textContent = `${formatDate(match.date)} · ${getInstrumentLabel(match)} · 剩余 ${formatNumber(availableQuantity)} · 成本 ${currency(match.cashAmount)}`;
@@ -1039,14 +1381,14 @@ function updateFundingMatchOptions() {
 
   if (matches.some((match) => match.id === previousValue)) {
     elements.fundingMatchTrade.value = previousValue;
-  } else if (current?.side === "sell" && matches.some((match) => match.id === current.matchedTradeId)) {
+  } else if (current?.matchedTradeId && matches.some((match) => match.id === current.matchedTradeId)) {
     elements.fundingMatchTrade.value = current.matchedTradeId;
   }
 
   const selected = getSelectedMatch();
   if (selected) {
     const editingQuantity =
-      current?.side === "sell" && current.matchedTradeId === selected.id ? current.quantity : 0;
+      current?.matchedTradeId === selected.id ? current.quantity : 0;
     elements.fundingMatchHelp.textContent = `已填入 ${getInstrumentLabel(selected)}，可匹配数量 ${formatNumber(selected.openQuantity + editingQuantity)}，买入总成本 ${currency(selected.cashAmount)}。标的信息仍可手动修改。`;
   } else if (matches.length === 0) {
     elements.fundingMatchHelp.textContent = "当前标的类型没有可匹配买入；可改为不匹配后保存卖出，但不会计算本次盈亏。";
@@ -1055,10 +1397,140 @@ function updateFundingMatchOptions() {
   }
 }
 
+function updateBullCallSpreadMatchOptions() {
+  const previousValue = elements.fundingBullCallMatchStrategy.value;
+  const matches = getBullCallSpreadMatches();
+
+  elements.fundingBullCallMatchStrategy.innerHTML = "";
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = matches.length > 0 ? "选择已有 Bull Call" : "没有可匹配价差";
+  elements.fundingBullCallMatchStrategy.append(placeholder);
+
+  for (const { entry, metrics } of matches) {
+    const option = document.createElement("option");
+    option.value = entry.strategyId;
+    option.textContent = `${formatDate(getEntryTradeDate(entry))} · ${metrics.longCall.ticker} ${formatDate(metrics.longCall.expiryDate)} ${formatNumber(metrics.longCall.strike)}/${formatNumber(metrics.shortCall.strike)} Call · 剩余 ${formatNumber(Math.min(metrics.longCall.openQuantity, metrics.shortCall.openQuantity))}`;
+    elements.fundingBullCallMatchStrategy.append(option);
+  }
+
+  if (matches.some(({ entry }) => entry.strategyId === previousValue)) {
+    elements.fundingBullCallMatchStrategy.value = previousValue;
+  }
+
+  const selected = getSelectedBullCallSpreadMatch();
+  if (selected) {
+    const { metrics } = selected;
+    elements.fundingBullCallMatchHelp.textContent = `已选择 ${metrics.longCall.ticker} ${formatDate(metrics.longCall.expiryDate)} ${formatNumber(metrics.longCall.strike)}/${formatNumber(metrics.shortCall.strike)} Call，最多可平 ${formatNumber(Math.min(metrics.longCall.openQuantity, metrics.shortCall.openQuantity))} 份。`;
+  } else if (matches.length === 0) {
+    elements.fundingBullCallMatchHelp.textContent = "当前账户没有可匹配的未平 Bull Call 价差。";
+  } else {
+    elements.fundingBullCallMatchHelp.textContent = "选择已有 Bull Call 后会自动填入标的信息。";
+  }
+}
+
+function applySelectedBullCallSpreadMatchToForm() {
+  const selected = getSelectedBullCallSpreadMatch();
+  if (!selected) {
+    return;
+  }
+
+  const { metrics } = selected;
+  elements.fundingBullCallTicker.value = metrics.longCall.ticker;
+  elements.fundingBullCallExpiryDate.value = metrics.longCall.expiryDate;
+  elements.fundingBullCallQuantity.value = Math.min(metrics.longCall.openQuantity, metrics.shortCall.openQuantity);
+  elements.fundingBullCallLongStrike.value = metrics.longCall.strike;
+  elements.fundingBullCallShortStrike.value = metrics.shortCall.strike;
+}
+
 function updateFundingFormVisibility() {
+  const isBullCallMode = elements.fundingEntryMode.value === "bull_call";
+  const singleTradeControls = [
+    document.querySelector('label[for="funding-asset-type"]'),
+    elements.fundingAssetType,
+    document.querySelector('label[for="funding-match-enabled"]'),
+    elements.fundingMatchEnabled,
+    elements.fundingMatchFields,
+    document.querySelector('label[for="funding-side"]'),
+    elements.fundingSide,
+    elements.fundingCloseFields,
+    document.querySelector('label[for="funding-ticker"]'),
+    elements.fundingTicker,
+    elements.fundingOptionFields,
+    document.querySelector('label[for="funding-quantity"]'),
+    elements.fundingQuantity,
+    document.querySelector('label[for="funding-price"]'),
+    elements.fundingPrice,
+    document.querySelector('label[for="funding-fee"]'),
+    elements.fundingFee,
+  ].filter(Boolean);
+
+  elements.fundingBullCallFields.hidden = !isBullCallMode;
+  elements.fundingBullCallMatchFields.hidden =
+    !isBullCallMode || elements.fundingBullCallMatchEnabled.value !== "yes";
+  const isBullCallWorthlessExpiration =
+    isBullCallMode &&
+    elements.fundingBullCallMatchEnabled.value === "yes" &&
+    elements.fundingBullCallCloseReason.value === "expired_worthless";
+
+  if (isBullCallWorthlessExpiration) {
+    elements.fundingBullCallLongPrice.value = "0";
+    elements.fundingBullCallShortPrice.value = "0";
+    elements.fundingBullCallFee.value = "0";
+  }
+
+  for (const input of [
+    elements.fundingBullCallLongPrice,
+    elements.fundingBullCallShortPrice,
+    elements.fundingBullCallFee,
+  ]) {
+    input.readOnly = isBullCallWorthlessExpiration;
+  }
+
+  for (const control of singleTradeControls) {
+    control.hidden = isBullCallMode;
+  }
+
+  if (!elements.fundingEditingId.value) {
+    elements.fundingFormTitle.textContent = isBullCallMode ? "新增 Bull Call 价差" : "新增证券交易";
+    elements.fundingSubmitButton.textContent = isBullCallMode ? "保存策略" : "保存记录";
+  }
+
+  for (const input of [
+    elements.fundingTicker,
+    elements.fundingQuantity,
+    elements.fundingPrice,
+    elements.fundingAssetType,
+    elements.fundingSide,
+  ]) {
+    input.required = !isBullCallMode;
+  }
+
+  for (const input of [
+    elements.fundingBullCallTicker,
+    elements.fundingBullCallExpiryDate,
+    elements.fundingBullCallQuantity,
+    elements.fundingBullCallLongStrike,
+    elements.fundingBullCallLongPrice,
+    elements.fundingBullCallShortStrike,
+    elements.fundingBullCallShortPrice,
+  ]) {
+    input.required = isBullCallMode;
+  }
+
+  if (isBullCallMode) {
+    if (elements.fundingBullCallMatchEnabled.value === "yes") {
+      updateBullCallSpreadMatchOptions();
+    } else {
+      elements.fundingBullCallMatchStrategy.value = "";
+    }
+    return;
+  }
+
   const isOption = elements.fundingAssetType.value === "option";
   const isSell = elements.fundingSide.value === "sell";
   const canExpireWorthless = isOption && isSell;
+  const matchToggleLabel = document.querySelector('label[for="funding-match-enabled"]');
 
   if (!canExpireWorthless) {
     elements.fundingCloseReason.value = "";
@@ -1070,8 +1542,17 @@ function updateFundingFormVisibility() {
     elements.fundingFee.value = "0";
   }
 
+  if (!isSell) {
+    elements.fundingMatchEnabled.value = "no";
+    elements.fundingMatchTrade.value = "";
+  }
+
   const isMatching = isSell && elements.fundingMatchEnabled.value === "yes";
 
+  if (matchToggleLabel) {
+    matchToggleLabel.hidden = !isSell;
+  }
+  elements.fundingMatchEnabled.hidden = !isSell;
   elements.fundingOptionFields.hidden = !isOption;
   elements.fundingMatchFields.hidden = !isMatching;
   elements.fundingCloseFields.hidden = !canExpireWorthless;
@@ -1098,6 +1579,7 @@ function resetForm() {
 function resetFundingForm() {
   elements.fundingFlowForm.reset();
   elements.fundingEditingId.value = "";
+  elements.fundingEntryMode.value = "single";
   elements.fundingFormTitle.textContent = "新增证券交易";
   elements.fundingSubmitButton.textContent = "保存记录";
   elements.fundingCancelEditButton.hidden = true;
@@ -1105,6 +1587,8 @@ function resetFundingForm() {
   elements.fundingFee.value = "0";
   elements.fundingCloseReason.value = "";
   elements.fundingMatchEnabled.value = "no";
+  elements.fundingBullCallMatchEnabled.value = "no";
+  elements.fundingBullCallCloseReason.value = "";
   updateFundingFormVisibility();
   refreshFundingPreview();
 }
@@ -1124,6 +1608,7 @@ function startEdit(transaction) {
 
 function startFundingEdit(flow) {
   elements.fundingEditingId.value = flow.id;
+  elements.fundingEntryMode.value = "single";
   elements.fundingFormTitle.textContent = isTradeFlow(flow) ? "编辑证券交易" : "编辑资金记录";
   elements.fundingSubmitButton.textContent = "保存修改";
   elements.fundingCancelEditButton.hidden = false;
@@ -1269,6 +1754,12 @@ async function saveFundingBalance(event) {
 
 async function submitFundingFlow(event) {
   event.preventDefault();
+
+  if (elements.fundingEntryMode.value === "bull_call") {
+    await submitBullCallSpread();
+    return;
+  }
+
   const draft = getDraftTrade();
 
   const body = {
@@ -1290,7 +1781,7 @@ async function submitFundingFlow(event) {
     body.strike = draft.strike;
   }
 
-  if (body.side === "sell" && elements.fundingMatchEnabled.value === "yes") {
+  if (elements.fundingMatchEnabled.value === "yes") {
     body.matchedTradeId = elements.fundingMatchTrade.value;
   }
 
@@ -1316,6 +1807,83 @@ async function submitFundingFlow(event) {
 
   const payload = await request(endpoint, {
     method,
+    body: JSON.stringify(body),
+  });
+
+  renderFundingAccounts(payload);
+  state.fundingSummary = payload.fundingSummary;
+  renderFundingSummary(payload.fundingSummary);
+  renderFundingHistory(payload.fundingSummary);
+  resetFundingForm();
+}
+
+async function submitBullCallSpread() {
+  const spread = getDraftBullCallSpread();
+  const body = {
+    accountId: state.selectedFundingAccountId,
+    date: elements.fundingFlowDate.value,
+    ticker: spread.ticker,
+    expiryDate: spread.expiryDate,
+    quantity: spread.quantity,
+    longStrike: spread.longStrike,
+    longPrice: spread.longPrice,
+    shortStrike: spread.shortStrike,
+    shortPrice: spread.shortPrice,
+    fee: spread.fee,
+    note: elements.fundingFlowNote.value.trim(),
+  };
+
+  if (elements.fundingBullCallMatchEnabled.value === "yes") {
+    body.matchedStrategyId = elements.fundingBullCallMatchStrategy.value;
+    body.closeReason = spread.closeReason;
+  }
+
+  if (
+    !body.date ||
+    !body.ticker ||
+    !body.expiryDate ||
+    !Number.isFinite(body.quantity) ||
+    body.quantity <= 0 ||
+    !Number.isFinite(body.longStrike) ||
+    body.longStrike <= 0 ||
+    !Number.isFinite(body.longPrice) ||
+    !Number.isFinite(body.shortStrike) ||
+    body.shortStrike <= 0 ||
+    !Number.isFinite(body.shortPrice) ||
+    body.fee < 0
+  ) {
+    window.alert("请填写有效的日期、Ticker、到期日、份数、行权价、成交价和手续费。");
+    return;
+  }
+
+  if (body.shortStrike <= body.longStrike) {
+    window.alert("Bull Call 需要卖出更高行权价的 Call。");
+    return;
+  }
+
+  const metrics = getBullCallSpreadMetrics(spread);
+  if (!body.matchedStrategyId && (metrics.netDebit <= 0 || metrics.maxProfit <= 0)) {
+    window.alert("这个价差的风险收益不合理，请检查行权价、成交价或手续费。");
+    return;
+  }
+
+  if (elements.fundingBullCallMatchEnabled.value === "yes" && !body.matchedStrategyId) {
+    window.alert("请选择要匹配平仓的 Bull Call 价差。");
+    return;
+  }
+
+  if (body.closeReason === "expired_worthless" && (body.longPrice !== 0 || body.shortPrice !== 0 || body.fee !== 0)) {
+    window.alert("无价值到期的两条成交价和手续费都必须为 0。");
+    return;
+  }
+
+  if (body.closeReason !== "expired_worthless" && (body.longPrice <= 0 || body.shortPrice <= 0)) {
+    window.alert("正常价差录入需要两条腿的成交价都大于 0。");
+    return;
+  }
+
+  const payload = await request("/api/funding/strategies/bull-call", {
+    method: "POST",
     body: JSON.stringify(body),
   });
 
@@ -1353,6 +1921,26 @@ async function deleteFundingFlow(flowId) {
     ? `?accountId=${encodeURIComponent(state.selectedFundingAccountId)}`
     : "";
   const payload = await request(`/api/funding/flows/${flowId}${accountQuery}`, {
+    method: "DELETE",
+  });
+
+  renderFundingAccounts(payload);
+  state.fundingSummary = payload.fundingSummary;
+  renderFundingSummary(payload.fundingSummary);
+  renderFundingHistory(payload.fundingSummary);
+  resetFundingForm();
+}
+
+async function deleteFundingStrategy(strategyId) {
+  const confirmed = window.confirm("确定删除这组 Bull Call 价差记录吗？");
+  if (!confirmed) {
+    return;
+  }
+
+  const accountQuery = state.selectedFundingAccountId
+    ? `?accountId=${encodeURIComponent(state.selectedFundingAccountId)}`
+    : "";
+  const payload = await request(`/api/funding/strategies/${strategyId}${accountQuery}`, {
     method: "DELETE",
   });
 
@@ -1518,14 +2106,19 @@ elements.fundingFlowForm.addEventListener("submit", (event) => {
 elements.transactionAmount.addEventListener("input", refreshPreview);
 elements.transactionType.addEventListener("change", refreshPreview);
 elements.fundingAssetType.addEventListener("change", refreshFundingPreview);
+elements.fundingEntryMode.addEventListener("change", refreshFundingPreview);
 elements.fundingMatchEnabled.addEventListener("change", () => {
-  if (elements.fundingMatchEnabled.value === "yes") {
-    elements.fundingSide.value = "sell";
-  }
   refreshFundingPreview();
 });
 elements.fundingSide.addEventListener("change", () => {
   if (elements.fundingSide.value !== "sell") {
+    elements.fundingMatchEnabled.value = "no";
+    elements.fundingMatchTrade.value = "";
+  }
+  if (elements.fundingSide.value !== "sell" && elements.fundingCloseReason.value === "expired_worthless") {
+    elements.fundingCloseReason.value = "";
+  }
+  if (elements.fundingSide.value !== "sell" && elements.fundingCloseReason.value) {
     elements.fundingMatchEnabled.value = "no";
   }
   refreshFundingPreview();
@@ -1546,8 +2139,26 @@ elements.fundingStrike.addEventListener("input", refreshFundingPreview);
 elements.fundingQuantity.addEventListener("input", refreshFundingPreview);
 elements.fundingPrice.addEventListener("input", refreshFundingPreview);
 elements.fundingFee.addEventListener("input", refreshFundingPreview);
+for (const input of [
+  elements.fundingBullCallTicker,
+  elements.fundingBullCallExpiryDate,
+  elements.fundingBullCallQuantity,
+  elements.fundingBullCallLongStrike,
+  elements.fundingBullCallLongPrice,
+  elements.fundingBullCallShortStrike,
+  elements.fundingBullCallShortPrice,
+  elements.fundingBullCallFee,
+]) {
+  input.addEventListener("input", refreshFundingPreview);
+}
 elements.fundingMatchTrade.addEventListener("change", () => {
   applySelectedMatchToForm();
+  refreshFundingPreview();
+});
+elements.fundingBullCallMatchEnabled.addEventListener("change", refreshFundingPreview);
+elements.fundingBullCallCloseReason.addEventListener("change", refreshFundingPreview);
+elements.fundingBullCallMatchStrategy.addEventListener("change", () => {
+  applySelectedBullCallSpreadMatchToForm();
   refreshFundingPreview();
 });
 elements.cancelEditButton.addEventListener("click", resetForm);

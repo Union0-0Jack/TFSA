@@ -214,6 +214,92 @@
             <label for="funding-flow-date">日期</label>
             <input id="funding-flow-date" type="date" required />
 
+            <label for="funding-entry-mode">录入方式</label>
+            <select id="funding-entry-mode">
+              <option value="single">单笔交易</option>
+              <option value="bull_call">Bull Call 价差</option>
+            </select>
+
+            <div class="strategy-fields" id="funding-bull-call-fields" hidden>
+              <label for="funding-bull-call-match-enabled">是否匹配价差</label>
+              <select id="funding-bull-call-match-enabled">
+                <option value="no">不匹配，新开价差</option>
+                <option value="yes">匹配已有价差</option>
+              </select>
+
+              <div class="match-fields" id="funding-bull-call-match-fields" hidden>
+                <label for="funding-bull-call-match-strategy">匹配价差记录</label>
+                <select id="funding-bull-call-match-strategy"></select>
+                <p class="field-help" id="funding-bull-call-match-help">选择已有 Bull Call 后会自动填入标的信息。</p>
+
+                <label for="funding-bull-call-close-reason">平仓方式</label>
+                <select id="funding-bull-call-close-reason">
+                  <option value="">正常平仓</option>
+                  <option value="expired_worthless">无价值到期</option>
+                </select>
+              </div>
+
+              <label for="funding-bull-call-ticker">Ticker</label>
+              <input id="funding-bull-call-ticker" type="text" placeholder="例如 QCOM" />
+
+              <label for="funding-bull-call-expiry-date">到期日</label>
+              <input id="funding-bull-call-expiry-date" type="date" />
+
+              <label for="funding-bull-call-quantity">合约份数</label>
+              <input
+                id="funding-bull-call-quantity"
+                type="number"
+                min="0.000001"
+                step="0.000001"
+                placeholder="例如 1"
+              />
+
+              <label for="funding-bull-call-long-strike">买入 Call 行权价</label>
+              <input
+                id="funding-bull-call-long-strike"
+                type="number"
+                min="0.01"
+                step="0.01"
+                placeholder="例如 10"
+              />
+
+              <label for="funding-bull-call-long-price">买入 Call 成交价</label>
+              <input
+                id="funding-bull-call-long-price"
+                type="number"
+                min="0.01"
+                step="0.0001"
+                placeholder="例如 1.20"
+              />
+
+              <label for="funding-bull-call-short-strike">卖出 Call 行权价</label>
+              <input
+                id="funding-bull-call-short-strike"
+                type="number"
+                min="0.01"
+                step="0.01"
+                placeholder="例如 15"
+              />
+
+              <label for="funding-bull-call-short-price">卖出 Call 成交价</label>
+              <input
+                id="funding-bull-call-short-price"
+                type="number"
+                min="0.01"
+                step="0.0001"
+                placeholder="例如 0.45"
+              />
+
+              <label for="funding-bull-call-fee">总手续费</label>
+              <input
+                id="funding-bull-call-fee"
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder="例如 1.25"
+              />
+            </div>
+
             <label for="funding-asset-type">标的类型</label>
             <select id="funding-asset-type" required>
               <option value="stock">股票</option>

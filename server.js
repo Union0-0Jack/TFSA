@@ -123,6 +123,10 @@ function validateNonNegativeNumber(value) {
   return number;
 }
 
+function roundMoney(value) {
+  return Number((Number(value) || 0).toFixed(2));
+}
+
 function validateTransactionPayload(body) {
   const year = validateYear(body.year);
   const amount = validateAmount(body.amount);
@@ -157,14 +161,112 @@ function validateTransactionPayload(body) {
   };
 }
 
-function getMatchedQuantity(flows, buy, ignoredFlowId = "") {
+function validateBullCallSpreadPayload(body) {
+  const date = typeof body.date === "string" ? body.date : "";
+  const ticker = typeof body.ticker === "string" ? body.ticker.trim().toUpperCase() : "";
+  const expiryDate = typeof body.expiryDate === "string" ? body.expiryDate : "";
+  const quantity = validatePositiveNumber(body.quantity);
+  const longStrike = validatePositiveNumber(body.longStrike);
+  const shortStrike = validatePositiveNumber(body.shortStrike);
+  const longPrice = validatePositiveNumber(body.longPrice);
+  const shortPrice = validatePositiveNumber(body.shortPrice);
+  const fee = validateAmount(body.fee || 0);
+  const note = typeof body.note === "string" ? body.note.trim() : "";
+  const matchedStrategyId = typeof body.matchedStrategyId === "string" ? body.matchedStrategyId : "";
+  const closeReason = body.closeReason === "expired_worthless" ? "expired_worthless" : "";
+  const isWorthlessExpiration = Boolean(matchedStrategyId) && closeReason === "expired_worthless";
+  const normalizedLongPrice = isWorthlessExpiration ? validateNonNegativeNumber(body.longPrice) : longPrice;
+  const normalizedShortPrice = isWorthlessExpiration ? validateNonNegativeNumber(body.shortPrice) : shortPrice;
+
+  if (!date || Number.isNaN(Date.parse(date))) {
+    return { error: "日期无效。" };
+  }
+
+  if (!ticker) {
+    return { error: "Ticker 必填。" };
+  }
+
+  if (!expiryDate || Number.isNaN(Date.parse(expiryDate))) {
+    return { error: "期权到期日无效。" };
+  }
+
+  if (quantity === null) {
+    return { error: "合约份数必须大于 0。" };
+  }
+
+  if (longStrike === null || shortStrike === null || shortStrike <= longStrike) {
+    return { error: "Bull Call 需要卖出 Call 行权价高于买入 Call 行权价。" };
+  }
+
+  if (normalizedLongPrice === null || normalizedShortPrice === null) {
+    return { error: "两条腿的成交价都必须大于 0。" };
+  }
+
+  if (fee === null) {
+    return { error: "手续费必须为 0 或正数。" };
+  }
+
+  if (isWorthlessExpiration && (normalizedLongPrice !== 0 || normalizedShortPrice !== 0 || fee !== 0)) {
+    return { error: "无价值到期的两条成交价和手续费都必须为 0。" };
+  }
+
+  const grossLong = normalizedLongPrice * quantity * 100;
+  const grossShort = normalizedShortPrice * quantity * 100;
+  const netDebit = roundMoney(grossLong - grossShort + fee);
+  const maxProfit = roundMoney((shortStrike - longStrike) * quantity * 100 - netDebit);
+
+  if (!matchedStrategyId && netDebit <= 0) {
+    return { error: "Bull Call 价差的净成本必须大于 0。" };
+  }
+
+  if (!matchedStrategyId && maxProfit <= 0) {
+    return { error: "这个价差的最大收益不大于 0，请检查行权价、成交价或手续费。" };
+  }
+
+  return {
+    value: {
+      matchedStrategyId,
+      closeReason: isWorthlessExpiration ? closeReason : "",
+      date,
+      ticker,
+      expiryDate,
+      quantity,
+      longStrike,
+      shortStrike,
+      longPrice: normalizedLongPrice,
+      shortPrice: normalizedShortPrice,
+      fee,
+      note,
+    },
+  };
+}
+
+function getBullCallSpreadOpeningLegs(account, strategyId) {
+  const legs = account.flows.filter(
+    (flow) =>
+      isTradeFlow(flow) &&
+      flow.strategyType === "bull_call_spread" &&
+      flow.strategyId === strategyId &&
+      !flow.matchedTradeId
+  );
+  const longCall = legs.find((flow) => flow.strategyLeg === "long_call");
+  const shortCall = legs.find((flow) => flow.strategyLeg === "short_call");
+
+  if (!longCall || !shortCall) {
+    return null;
+  }
+
+  return { longCall, shortCall };
+}
+
+function getMatchedQuantity(flows, opener, ignoredFlowId = "") {
   return flows.reduce((total, flow) => {
     if (
       flow.id !== ignoredFlowId &&
       isTradeFlow(flow) &&
-      flow.side === "sell" &&
-      flow.matchedTradeId === buy.id &&
-      sameInstrument(buy, flow)
+      flow.side !== opener.side &&
+      flow.matchedTradeId === opener.id &&
+      sameInstrument(opener, flow)
     ) {
       return total + flow.quantity;
     }
@@ -287,7 +389,11 @@ function validateFundingFlowPayload(body, data, currentFlowId = "", accountId = 
   const account = getFundingAccount(data, accountId);
   const flows = account.flows;
 
-  if (side === "sell" && value.matchedTradeId) {
+  if (value.matchedTradeId) {
+    if (side !== "sell") {
+      return { error: "单笔交易只能用卖出记录匹配买入记录。" };
+    }
+
     const buy = flows.find((flow) => flow.id === value.matchedTradeId);
     if (!buy || !isTradeFlow(buy) || buy.side !== "buy") {
       return { error: "找不到可匹配的买入记录。" };
@@ -326,16 +432,16 @@ function canDeleteFundingFlow(data, flowId, accountId = "") {
   const account = getFundingAccount(data, accountId);
   const flow = account.flows.find((candidate) => candidate.id === flowId);
 
-  if (!flow || !isTradeFlow(flow) || flow.side !== "buy") {
+  if (!flow || !isTradeFlow(flow)) {
     return { ok: true };
   }
 
   const hasMatchedSell = account.flows.some(
-    (candidate) => isTradeFlow(candidate) && candidate.side === "sell" && candidate.matchedTradeId === flowId
+    (candidate) => isTradeFlow(candidate) && candidate.side !== flow.side && candidate.matchedTradeId === flowId
   );
 
   if (hasMatchedSell) {
-    return { ok: false, error: "这笔买入已有匹配卖出记录，请先删除或改掉卖出记录。" };
+    return { ok: false, error: "这笔开仓已有匹配平仓记录，请先删除或改掉平仓记录。" };
   }
 
   return { ok: true };
@@ -376,6 +482,56 @@ function validateFundingAccountSelection(data, accountId) {
     return null;
   }
   return account;
+}
+
+function buildBullCallSpreadFlows(strategyId, value, matchedLegs = null) {
+  const longFee = roundMoney(value.fee / 2);
+  const shortFee = roundMoney(value.fee - longFee);
+  const isClosingSpread = Boolean(matchedLegs);
+  const isWorthlessExpiration = isClosingSpread && value.closeReason === "expired_worthless";
+  const base = {
+    date: value.date,
+    assetType: "option",
+    ticker: value.ticker,
+    quantity: value.quantity,
+    expiryDate: value.expiryDate,
+    optionType: "call",
+    closeReason: "",
+    note: value.note,
+    matchedTradeId: "",
+    strategyId,
+    strategyType: "bull_call_spread",
+  };
+  const longCall = {
+    id: randomUUID(),
+    ...base,
+    side: isClosingSpread ? "sell" : "buy",
+    strike: value.longStrike,
+    price: value.longPrice,
+    fee: longFee,
+    closeReason: isWorthlessExpiration ? "expired_worthless" : "",
+    strategyLeg: "long_call",
+    matchedTradeId: matchedLegs?.longCall?.id || "",
+  };
+  const shortCall = {
+    id: randomUUID(),
+    ...base,
+    side: isClosingSpread ? "buy" : "sell",
+    strike: value.shortStrike,
+    price: value.shortPrice,
+    fee: shortFee,
+    closeReason: "",
+    strategyLeg: "short_call",
+    matchedTradeId: matchedLegs?.shortCall?.id || "",
+  };
+
+  for (const flow of [longCall, shortCall]) {
+    flow.cashAmount = calculateTradeCashAmount(flow);
+    flow.type = flow.side === "buy" ? "outflow" : "inflow";
+    flow.amount = flow.cashAmount;
+  }
+
+  return [longCall, shortCall];
 }
 
 async function serveStatic(request, response, pathname) {
@@ -473,6 +629,101 @@ async function handleApi(request, response, pathname) {
 
     await writeData(data);
     sendJson(response, 200, buildFundingAccountPayload(data, accountId));
+    return;
+  }
+
+  if (pathname === "/api/funding/strategies/bull-call" && request.method === "POST") {
+    const body = await readRequestBody(request);
+    const data = await readData();
+    const accountId = typeof body.accountId === "string" ? body.accountId : "";
+    const account = validateFundingAccountSelection(data, accountId);
+    if (!account) {
+      sendJson(response, 404, { error: "找不到指定账户。" });
+      return;
+    }
+
+    const validation = validateBullCallSpreadPayload(body);
+    if (validation.error) {
+      sendJson(response, 400, { error: validation.error });
+      return;
+    }
+
+    let strategyId = randomUUID();
+    let matchedLegs = null;
+
+    if (validation.value.matchedStrategyId) {
+      matchedLegs = getBullCallSpreadOpeningLegs(account, validation.value.matchedStrategyId);
+
+      if (!matchedLegs) {
+        sendJson(response, 404, { error: "找不到要匹配的 Bull Call 价差。" });
+        return;
+      }
+
+      if (
+        matchedLegs.longCall.ticker !== validation.value.ticker ||
+        matchedLegs.shortCall.ticker !== validation.value.ticker ||
+        matchedLegs.longCall.expiryDate !== validation.value.expiryDate ||
+        matchedLegs.shortCall.expiryDate !== validation.value.expiryDate ||
+        Number(matchedLegs.longCall.strike) !== Number(validation.value.longStrike) ||
+        Number(matchedLegs.shortCall.strike) !== Number(validation.value.shortStrike)
+      ) {
+        sendJson(response, 400, { error: "平仓价差必须匹配同一标的、到期日和行权价。" });
+        return;
+      }
+
+      const longOpenQuantity = matchedLegs.longCall.quantity - getMatchedQuantity(account.flows, matchedLegs.longCall);
+      const shortOpenQuantity = matchedLegs.shortCall.quantity - getMatchedQuantity(account.flows, matchedLegs.shortCall);
+      const maxCloseQuantity = Math.min(longOpenQuantity, shortOpenQuantity);
+
+      if (validation.value.quantity > maxCloseQuantity + 0.000001) {
+        sendJson(response, 400, { error: `平仓份数超过可匹配数量，当前最多可平 ${maxCloseQuantity}。` });
+        return;
+      }
+
+      strategyId = validation.value.matchedStrategyId;
+    }
+
+    const flows = buildBullCallSpreadFlows(strategyId, validation.value, matchedLegs);
+    for (const flow of flows) {
+      addFundingFlow(data, flow, accountId);
+    }
+    await writeData(data);
+    sendJson(response, 201, buildFundingAccountPayload(data, accountId));
+    return;
+  }
+
+  if (pathname.startsWith("/api/funding/strategies/") && request.method === "DELETE") {
+    const strategyId = pathname.split("/").pop();
+    const data = await readData();
+    const accountId = url.searchParams.get("accountId") || "";
+    const account = validateFundingAccountSelection(data, accountId);
+    if (!account) {
+      sendJson(response, 404, { error: "找不到指定账户。" });
+      return;
+    }
+
+    const strategyFlowIds = new Set(
+      account.flows.filter((flow) => flow.strategyId === strategyId).map((flow) => flow.id)
+    );
+    const hasMatchedCloser = account.flows.some(
+      (flow) => isTradeFlow(flow) && strategyFlowIds.has(flow.matchedTradeId)
+    );
+
+    if (hasMatchedCloser) {
+      sendJson(response, 400, { error: "这组策略已有匹配平仓记录，请先删除或改掉平仓记录。" });
+      return;
+    }
+
+    const nextFlows = account.flows.filter((flow) => flow.strategyId !== strategyId);
+    if (nextFlows.length === account.flows.length) {
+      sendJson(response, 404, { error: "找不到要删除的策略记录。" });
+      return;
+    }
+
+    account.flows = nextFlows;
+    data.funding.activeAccountId = account.id;
+    await writeData(data);
+    sendJson(response, 200, buildFundingAccountPayload(data, account.id));
     return;
   }
 

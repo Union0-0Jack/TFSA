@@ -256,7 +256,8 @@ h1 {
 
 .option-fields,
 .match-fields,
-.close-fields {
+.close-fields,
+.strategy-fields {
   display: grid;
   gap: 12px;
   padding: 14px;
@@ -267,7 +268,8 @@ h1 {
 
 .option-fields[hidden],
 .match-fields[hidden],
-.close-fields[hidden] {
+.close-fields[hidden],
+.strategy-fields[hidden] {
   display: none;
 }
 
